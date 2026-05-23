@@ -66,15 +66,15 @@
 					</view>
 					<view class="footer-right">
 						<view class="footer-icon" v-if="post.phoneCount">
-							<text class="icon-text">📞</text>
+							<text class="iconfont icon-dianhua icon-text"></text>
 							<text class="icon-num">{{post.phoneCount}}</text>
 						</view>
 						<view class="footer-icon" v-if="post.commentCount">
-							<text class="icon-text">💬</text>
+							<text class="iconfont icon-pinglun icon-text"></text>
 							<text class="icon-num">{{post.commentCount}}评论</text>
 						</view>
 						<view class="footer-icon">
-							<text class="icon-text">👍</text>
+							<text class="iconfont icon-dianzan icon-text"></text>
 							<text class="icon-num">{{post.likeCount}}</text>
 						</view>
 					</view>

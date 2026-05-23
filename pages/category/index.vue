@@ -94,6 +94,7 @@
 				<text>去结算</text>
 			</view>
 		</view>
+		<custom-tabbar :current="1" />
 	</view>
 </template>
 

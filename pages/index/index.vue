@@ -16,12 +16,12 @@
         </view>
         <view class="quick-actions">
           <view class="action-card" :data-index="0" @tap.stop="goCategory">
-            <image class="action-icon" :src="quickActions[0].icon" mode="aspectFit"></image>
+            <text class="iconfont icon-maicai action-icon"></text>
             <text class="action-title">{{quickActions[0].title}}</text>
             <text class="action-subtitle">{{quickActions[0].subtitle}}</text>
           </view>
           <view class="action-card" :data-index="1" @tap.stop="goNeighbor">
-            <image class="action-icon" :src="quickActions[1].icon" mode="aspectFit"></image>
+            <text class="iconfont icon-linlishequ action-icon"></text>
             <text class="action-title">{{quickActions[1].title}}</text>
             <text class="action-subtitle">{{quickActions[1].subtitle}}</text>
           </view>
@@ -82,6 +82,7 @@
     <view class="brand-section">
       <image class="brand-logo" src="/static/images/logo.png" mode="aspectFit"></image>
     </view>
+    <custom-tabbar :current="0" />
   </view>
 </template>
 
@@ -345,8 +346,8 @@
 }
 
 .action-icon {
-  width: 64rpx;
-  height: 64rpx;
+  font-size: 100rpx;
+  color: #4f9a42;
 }
 
 .action-title {

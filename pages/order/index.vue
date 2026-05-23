@@ -184,6 +184,7 @@
 				</view>
 			</view>
 		</scroll-view>
+		<custom-tabbar :current="2" />
 	</view>
 </template>
 
