@@ -26,12 +26,13 @@
 
 		<!-- 会员中心卡片 -->
 		<view class="vip-card">
-			<view class="vip-left">
+			<image class="member-decor" src="/static/images/member-decor.png" mode="aspectFill" />
+			<view class="member-left">
 				<text class="vip-title">大研菜场会员</text>
 				<text class="vip-subtitle">新鲜生活·专属特权</text>
 				<view class="vip-btn"><text>会员中心</text></view>
 			</view>
-			<view class="vip-right">
+			<view class="member-right">
 				<view class="growth-label-row">
 					<text class="growth-label">成长值</text>
 					<view class="icon-question"></view>
@@ -248,20 +249,38 @@
 
 /* ========== 会员中心卡片 ========== */
 .vip-card {
+	min-height: 210rpx;
 	border-radius: 16rpx;
-	padding: 28rpx 32rpx;
 	margin: -30rpx 20rpx 20rpx;
-	display: flex;
-	flex-direction: row;
 	overflow: hidden;
-	background: linear-gradient(135deg, #67A961 0%, #3A7A42 100%);
+	position: relative;
+	background: linear-gradient(135deg, #67A961, #3A7A42);
 }
 
-.vip-left {
+.member-decor {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	width: 60%;
+	height: 100%;
+	opacity: 0.1;
+	z-index: 0;
+}
+
+.member-left, .member-right {
+	position: relative;
+	z-index: 1;
+}
+
+.member-left {
 	width: 55%;
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
+	position: absolute;
+	left: 32rpx;
+	top: 28rpx;
+	bottom: 28rpx;
 }
 
 .vip-title {
@@ -269,16 +288,17 @@
 	font-weight: 600;
 	color: #FFFFFF;
 	letter-spacing: 4rpx;
+	margin-top: -10rpx;
 }
 
 .vip-subtitle {
 	font-size: 22rpx;
 	color: rgba(255,255,255,0.7);
-	margin-top: 8rpx;
+	margin-top: 16rpx;
 }
 
 .vip-btn {
-	margin-top: 16rpx;
+	margin-top: 24rpx;
 	display: inline-flex;
 	align-items: center;
 	border: 2rpx solid rgba(255,255,255,0.5);
@@ -292,12 +312,16 @@
 	color: rgba(255,255,255,0.9);
 }
 
-.vip-right {
+.member-right {
 	width: 45%;
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
 	align-items: flex-end;
+	position: absolute;
+	right: 32rpx;
+	top: 28rpx;
+	bottom: 28rpx;
 }
 
 .growth-label-row {
@@ -308,6 +332,7 @@
 .growth-label {
 	font-size: 22rpx;
 	color: rgba(255,255,255,0.7);
+	margin-left: -20rpx;
 }
 
 .icon-question {
