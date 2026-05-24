@@ -12,11 +12,12 @@
 	}
 </script>
 
-<<style>
+<style>
 @import '/static/css/iconfont.css';
 
 /*每个页面公共css */
 page {
     background-color: #F5F1EB;
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
 }
 </style>

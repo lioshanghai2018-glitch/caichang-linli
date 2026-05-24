@@ -6,7 +6,7 @@
 			:key="index"
 			@tap="switchTab(index)"
 		>
-			<text class="iconfont" :class="item.icon" :style="{ color: current === index ? selectedColor : color }"></text>
+			<view class="iconfont" :class="item.icon" :style="{ color: current === index ? selectedColor : color }"></view>
 			<text class="tabbar-text" :style="{ color: current === index ? selectedColor : color }">{{item.text}}</text>
 		</view>
 	</view>

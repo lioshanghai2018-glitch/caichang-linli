@@ -104,14 +104,6 @@
 					</view>
 				</view>
 
-				<!-- 门店信息 -->
-				<view class="store-row">
-					<text class="store-name">{{order.store}}</text>
-					<view class="call-btn" @tap.stop="makeCall">
-						<text>一键拨号</text>
-					</view>
-				</view>
-
 				<!-- 商品列表 -->
 				<view class="product-row" v-for="(product, pIdx) in order.products" :key="pIdx">
 					<image class="product-thumb" :src="product.image" mode="aspectFill"></image>
@@ -297,7 +289,9 @@
 	display: flex;
 	flex-direction: column;
 	height: 100vh;
+	width: 100%;
 	background-color: #FFFFFF;
+	overflow-x: hidden;
 }
 
 /* Tab切换栏 */
@@ -317,14 +311,14 @@
 }
 
 .tab-item text {
-	font-size: 28rpx;
+	font-size: 26rpx;
 	font-weight: 400;
 	color: #666666;
 }
 
 .tab-item.active text {
 	font-weight: 600;
-	color: #4f9a42;
+	color: #4F9A42;
 }
 
 .tab-item.active::after {
@@ -343,15 +337,20 @@
 .order-list {
 	flex: 1;
 	padding: 20rpx 24rpx;
+	box-sizing: border-box;
+	width: 100%;
+	overflow-x: hidden;
 }
 
 /* 订单卡片 */
 .order-card {
 	background-color: #FFFFFF;
 	border-radius: 16rpx;
-	padding: 32rpx;
+	padding: 24rpx;
 	margin-bottom: 20rpx;
 	border: 1rpx solid #F0F0F0;
+	box-sizing: border-box;
+	overflow: hidden;
 }
 
 .order-header {
@@ -445,13 +444,14 @@
 }
 
 .product-name {
-	font-size: 32rpx;
+	font-size: 26rpx;
 	font-weight: 600;
 	color: #333333;
 }
 
 .product-spec {
-	font-size: 28rpx;
+	font-size: 20rpx;
+	font-weight: 400;
 	color: #666666;
 	margin-top: 4rpx;
 }
@@ -461,24 +461,27 @@
 	flex-direction: column;
 	align-items: flex-end;
 	flex-shrink: 0;
-	margin-left: 16rpx;
+	margin-left: 12rpx;
+	min-width: 100rpx;
 }
 
 .product-original {
-	font-size: 28rpx;
+	font-size: 22rpx;
+	font-weight: 400;
 	color: #999999;
 	text-decoration: line-through;
 }
 
 .product-price {
-	font-size: 32rpx;
+	font-size: 28rpx;
 	font-weight: 700;
-	color: #4f9a42;
+	color: #4F9A42;
 	margin-top: 4rpx;
 }
 
 .product-qty {
-	font-size: 28rpx;
+	font-size: 20rpx;
+	font-weight: 400;
 	color: #666666;
 	margin-top: 4rpx;
 }

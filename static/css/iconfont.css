@@ -1,5 +1,5 @@
 @font-face {
-  font-family: "iconfont"; /* Project id 5183395 */
+  font-family: "iconfont";
   src: url('/static/fonts/iconfont.ttf') format('truetype');
 }
 
@@ -9,6 +9,38 @@
   font-style: normal;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.icon-logo:before {
+  content: "\e611";
+}
+
+.icon-peisong:before {
+  content: "\e612";
+}
+
+.icon-yixiadan:before {
+  content: "\e613";
+}
+
+.icon-yiwancheng:before {
+  content: "\e614";
+}
+
+.icon-fenjian:before {
+  content: "\e615";
+}
+
+.icon-daifukuan:before {
+  content: "\e616";
+}
+
+.icon-jiahao:before {
+  content: "\e617";
+}
+
+.icon-gouwuche:before {
+  content: "\e618";
 }
 
 .icon-dingdan:before {

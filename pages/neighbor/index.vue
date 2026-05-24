@@ -66,15 +66,15 @@
 					</view>
 					<view class="footer-right">
 						<view class="footer-icon" v-if="post.phoneCount">
-							<text class="iconfont icon-dianhua icon-text"></text>
+							<view class="iconfont icon-dianhua icon-text"></view>
 							<text class="icon-num">{{post.phoneCount}}</text>
 						</view>
 						<view class="footer-icon" v-if="post.commentCount">
-							<text class="iconfont icon-pinglun icon-text"></text>
+							<view class="iconfont icon-pinglun icon-text"></view>
 							<text class="icon-num">{{post.commentCount}}评论</text>
 						</view>
 						<view class="footer-icon">
-							<text class="iconfont icon-dianzan icon-text"></text>
+							<view class="iconfont icon-dianzan icon-text"></view>
 							<text class="icon-num">{{post.likeCount}}</text>
 						</view>
 					</view>
@@ -253,22 +253,22 @@
 	align-items: center;
 	justify-content: center;
 	height: 64rpx;
-	padding: 0 32rpx;
-	border-radius: 32rpx;
-	margin-right: 16rpx;
+	padding: 8rpx 24rpx;
+	border-radius: 40rpx;
+	margin-right: 12rpx;
 	background-color: #FFFFFF;
 	border: 2rpx solid #E0E0E0;
 }
 
 .tag-item text {
-	font-size: 28rpx;
+	font-size: 22rpx;
 	font-weight: 400;
 	color: #666666;
 }
 
 .tag-item.active {
-	background-color: #4f9a42;
-	border-color: #4f9a42;
+	background-color: #4F9A42;
+	border-color: #4F9A42;
 }
 
 .tag-item.active text {
@@ -315,36 +315,37 @@
 }
 
 .username {
-	font-size: 32rpx;
+	font-size: 26rpx;
 	font-weight: 600;
 	color: #333333;
 }
 
 .badge {
 	background-color: #E8F5E9;
-	padding: 4rpx 12rpx;
-	border-radius: 8rpx;
+	padding: 2rpx 8rpx;
+	border-radius: 4rpx;
 	margin-left: 12rpx;
 }
 
 .badge text {
-	font-size: 24rpx;
+	font-size: 18rpx;
 	font-weight: 600;
-	color: #4f9a42;
+	color: #4F9A42;
 }
 
 .post-time {
-	font-size: 24rpx;
+	font-size: 20rpx;
+	font-weight: 400;
 	color: #999999;
 	flex-shrink: 0;
 }
 
 /* 正文 */
 .post-content {
-	font-size: 28rpx;
+	font-size: 24rpx;
 	font-weight: 400;
 	color: #333333;
-	line-height: 44rpx;
+	line-height: 40rpx;
 	margin-top: 16rpx;
 }
 
@@ -385,20 +386,21 @@
 
 .post-tag {
 	background-color: #E8F5E9;
-	padding: 4rpx 16rpx;
-	border-radius: 8rpx;
+	padding: 2rpx 8rpx;
+	border-radius: 4rpx;
 	margin-right: 12rpx;
 }
 
 .post-tag text {
-	font-size: 24rpx;
-	color: #4f9a42;
+	font-size: 18rpx;
+	font-weight: 600;
+	color: #4F9A42;
 }
 
 .post-price {
-	font-size: 28rpx;
+	font-size: 22rpx;
 	font-weight: 600;
-	color: #4f9a42;
+	color: #4F9A42;
 	margin-right: 12rpx;
 }
 

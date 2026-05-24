@@ -16,12 +16,12 @@
         </view>
         <view class="quick-actions">
           <view class="action-card" :data-index="0" @tap.stop="goCategory">
-            <text class="iconfont icon-maicai action-icon"></text>
+            <view class="iconfont icon-maicai action-icon"></view>
             <text class="action-title">{{quickActions[0].title}}</text>
             <text class="action-subtitle">{{quickActions[0].subtitle}}</text>
           </view>
           <view class="action-card" :data-index="1" @tap.stop="goNeighbor">
-            <text class="iconfont icon-linlishequ action-icon"></text>
+            <view class="iconfont icon-linlishequ action-icon"></view>
             <text class="action-title">{{quickActions[1].title}}</text>
             <text class="action-subtitle">{{quickActions[1].subtitle}}</text>
           </view>
@@ -50,7 +50,7 @@
                   <text class="original-price">{{item.originalPrice}}</text>
                   <text class="current-price">{{item.currentPrice}}</text>
                   <view class="add-button" :data-id="item.id" @tap="addToCart">
-                    <text class="add-icon">+</text>
+                    <view class="add-icon"></view>
                   </view>
                 </view>
               </view>
@@ -320,10 +320,11 @@
 }
 
 .vip-tag {
-  background-color: #4CAF50;
+  background-color: #4F9A42;
   color: #FFFFFF;
-  font-size: 20rpx;
-  padding: 4rpx 12rpx;
+  font-size: 18rpx;
+  font-weight: 600;
+  padding: 2rpx 10rpx;
   border-radius: 8rpx;
   margin-left: 16rpx;
 }
@@ -346,19 +347,20 @@
 }
 
 .action-icon {
-  font-size: 100rpx;
-  color: #4f9a42;
+  font-size: 95rpx;
+  color: #4F9A42;
 }
 
 .action-title {
   font-size: 36rpx;
-  font-weight: 700;
-  color: #000000;
+  font-weight: 600;
+  color: #333333;
   margin-top: 16rpx;
 }
 
 .action-subtitle {
-  font-size: 22rpx;
+  font-size: 20rpx;
+  font-weight: 400;
   color: #999999;
   margin-top: 8rpx;
 }
@@ -373,9 +375,9 @@
 }
 
 .section-title {
-  font-size: 32rpx;
-  font-weight: 600;
-  color: #333333;
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #2D5A27;
 }
 
 .countdown-box {
@@ -386,13 +388,15 @@
 }
 
 .countdown-text {
-  font-size: 24rpx;
-  color: #333333;
+  font-size: 22rpx;
+  font-weight: 400;
+  color: #FF3333;
 }
 
 .view-more {
-  font-size: 24rpx;
-  color: #2D5A27;
+  font-size: 22rpx;
+  font-weight: 400;
+  color: #999999;
   margin-left: auto;
 }
 
@@ -425,7 +429,8 @@
 }
 
 .product-name {
-  font-size: 24rpx;
+  font-size: 26rpx;
+  font-weight: 600;
   color: #333333;
   margin-top: 12rpx;
   display: block;
@@ -440,8 +445,9 @@
 }
 
 .product-weight {
-  font-size: 18rpx;
-  color: #999999;
+  font-size: 20rpx;
+  font-weight: 400;
+  color: #666666;
   margin-top: 4rpx;
   display: block;
   white-space: normal;
@@ -454,23 +460,24 @@
 }
 
 .original-price {
-  font-size: 24rpx;
+  font-size: 22rpx;
+  font-weight: 400;
   color: #999999;
   text-decoration: line-through;
 }
 
 .current-price {
   font-size: 28rpx;
-  font-weight: 600;
-  color: #FF0000;
+  font-weight: 700;
+  color: #FF3333;
   margin-left: 16rpx;
 }
 
 .add-button {
   width: 44rpx;
   height: 44rpx;
-  background-color: #4f9a42;
-  border-radius: 22rpx;
+  background-color: #4F9A42;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -479,9 +486,21 @@
 }
 
 .add-icon {
-  color: #FFFFFF;
-  font-size: 32rpx;
-  font-weight: bold;
+  width: 20rpx;
+  height: 4rpx;
+  background-color: #FFFFFF;
+  border-radius: 2rpx;
+  position: relative;
+}
+.add-icon::after {
+  content: '';
+  position: absolute;
+  width: 4rpx;
+  height: 20rpx;
+  background-color: #FFFFFF;
+  border-radius: 2rpx;
+  top: -8rpx;
+  left: 8rpx;
 }
 
 /* 团购模块 */
@@ -561,7 +580,7 @@ swiper-item {
 }
 
 .brand-logo {
-  width: 120rpx;
-  height: 120rpx;
+  width: 96rpx;
+  height: 96rpx;
 }
 </style>

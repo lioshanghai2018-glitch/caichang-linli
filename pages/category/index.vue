@@ -11,7 +11,7 @@
 				<input class="search-input" type="text" placeholder="搜索商品" placeholder-class="search-placeholder" />
 			</view>
 				<view class="cart-wrap">
-					<image class="cart-icon" src="/static/images/cart.png" mode="aspectFit"></image>
+					<view class="iconfont icon-gouwuche cart-icon"></view>
 					<view class="cart-badge" v-if="cartCount > 0">
 						<text>{{cartCount}}</text>
 					</view>
@@ -64,11 +64,11 @@
 						</view>
 						<view class="quantity-control">
 							<view class="btn-minus" v-if="item.quantity > 0" @tap="decrease(item)">
-								<text>−</text>
+								<view class="minus-icon"></view>
 							</view>
 							<text class="quantity-num" v-if="item.quantity > 0">{{item.quantity}}</text>
 							<view class="btn-plus" @tap="increase(item)">
-								<text>+</text>
+								<view class="add-icon"></view>
 							</view>
 						</view>
 					</view>
@@ -408,15 +408,16 @@
 }
 
 .product-name {
-	font-size: 28rpx;
+	font-size: 26rpx;
 	font-weight: 600;
 	color: #333333;
 	line-height: 40rpx;
 }
 
 .product-desc {
-	font-size: 22rpx;
-	color: #999999;
+	font-size: 20rpx;
+	font-weight: 400;
+	color: #666666;
 	margin-top: 6rpx;
 }
 
@@ -424,14 +425,15 @@
 	display: inline-flex;
 	background-color: #E8F5E9;
 	border-radius: 4rpx;
-	padding: 2rpx 10rpx;
+	padding: 2rpx 8rpx;
 	margin-top: 8rpx;
 	align-self: flex-start;
 }
 
 .product-service-tag text {
-	font-size: 20rpx;
-	color: #4CAF50;
+	font-size: 18rpx;
+	font-weight: 600;
+	color: #4F9A42;
 }
 
 .price-row {
@@ -442,15 +444,16 @@
 
 .original-price {
 	font-size: 22rpx;
+	font-weight: 400;
 	color: #999999;
 	text-decoration: line-through;
 	margin-left: 8rpx;
 }
 
 .current-price {
-	font-size: 32rpx;
+	font-size: 28rpx;
 	font-weight: 700;
-	color: #4CAF50;
+	color: #FF3333;
 }
 
 .quantity-control {
@@ -471,23 +474,53 @@
 	justify-content: center;
 }
 
-.btn-minus {
-	border: 2rpx solid #E0E0E0;
-	background-color: #FFFFFF;
+.minus-icon {
+	width: 20rpx;
+	height: 4rpx;
+	background-color: #999999;
+	border-radius: 2rpx;
 }
 
-.btn-minus text {
-	font-size: 28rpx;
-	color: #999999;
+.btn-minus {
+	width: 44rpx;
+	height: 44rpx;
+	border: 2rpx solid #E0E0E0;
+	border-radius: 50%;
+	background-color: #FFFFFF;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .btn-plus {
-	background-color: #4f9a42;
+	background-color: #4F9A42;
+	border-radius: 8rpx;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
-.btn-plus text {
-	font-size: 28rpx;
-	color: #FFFFFF;
+.add-icon {
+	width: 20rpx;
+	height: 4rpx;
+	background-color: #FFFFFF;
+	border-radius: 2rpx;
+	position: relative;
+}
+.add-icon::after {
+	content: '';
+	position: absolute;
+	width: 4rpx;
+	height: 20rpx;
+	background-color: #FFFFFF;
+	border-radius: 2rpx;
+	top: -8rpx;
+	left: 8rpx;
+}
+
+.cart-icon {
+	font-size: 50rpx;
+	color: #333333;
 }
 
 .quantity-num {
@@ -500,7 +533,7 @@
 /* 底部结算栏 */
 .checkout-bar {
 	position: fixed;
-	bottom: 0;
+	bottom: 100rpx;
 	left: 0;
 	right: 0;
 	height: 100rpx;
@@ -529,8 +562,8 @@
 }
 
 .checkout-cart-icon {
-	width: 128rpx;
-	height: 128rpx;
+	width: 75rpx;
+	height: 75rpx;
 }
 
 .checkout-cart-badge {

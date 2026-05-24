@@ -53,7 +53,7 @@
 			<!-- 我的订单 -->
 			<view class="entry-item">
 				<view class="entry-icon-wrap">
-					<text class="iconfont icon-wodedingdan"></text>
+					<view class="iconfont icon-wodedingdan"></view>
 					<view class="entry-badge"><text>3</text></view>
 				</view>
 				<text class="entry-title">我的订单</text>
@@ -62,7 +62,7 @@
 			<!-- 收货地址 -->
 			<view class="entry-item">
 				<view class="entry-icon-wrap">
-					<text class="iconfont icon-shouhuodizhi"></text>
+					<view class="iconfont icon-shouhuodizhi"></view>
 				</view>
 				<text class="entry-title">收货地址</text>
 				<text class="entry-subtitle">管理地址</text>
@@ -70,7 +70,7 @@
 			<!-- 优惠券 -->
 			<view class="entry-item">
 				<view class="entry-icon-wrap">
-					<text class="iconfont icon-youhuiquan"></text>
+					<view class="iconfont icon-youhuiquan"></view>
 				</view>
 				<text class="entry-title">优惠券</text>
 				<text class="entry-subtitle">6张可用</text>
@@ -78,7 +78,7 @@
 			<!-- 客服中心 -->
 			<view class="entry-item">
 				<view class="entry-icon-wrap">
-					<text class="iconfont icon-kefuzhongxin"></text>
+					<view class="iconfont icon-kefuzhongxin"></view>
 				</view>
 				<text class="entry-title">客服中心</text>
 				<text class="entry-subtitle">贴心服务</text>
@@ -89,21 +89,21 @@
 		<view class="option-list">
 			<!-- 邻里社区 -->
 			<view class="option-item">
-				<text class="iconfont icon-linlishequ"></text>
+				<view class="iconfont icon-linlishequ"></view>
 				<text class="option-text">邻里社区</text>
 				<view class="icon-arrow"></view>
 			</view>
 			<view class="option-divider"></view>
 			<!-- 浏览记录 -->
 			<view class="option-item">
-				<text class="iconfont icon-liulanjilu"></text>
+				<view class="iconfont icon-liulanjilu"></view>
 				<text class="option-text">浏览记录</text>
 				<view class="icon-arrow"></view>
 			</view>
 			<view class="option-divider"></view>
 			<!-- 邀请好友 -->
 			<view class="option-item">
-				<text class="iconfont icon-yaoqinghaoyou"></text>
+				<view class="iconfont icon-yaoqinghaoyou"></view>
 				<text class="option-text">邀请好友</text>
 				<view class="option-tag"><text>领优惠券</text></view>
 				<view class="icon-arrow"></view>
@@ -111,14 +111,14 @@
 			<view class="option-divider"></view>
 			<!-- 关于我们 -->
 			<view class="option-item">
-				<text class="iconfont icon-guanyuwomen"></text>
+				<view class="iconfont icon-guanyuwomen"></view>
 				<text class="option-text">关于我们</text>
 				<view class="icon-arrow"></view>
 			</view>
 			<view class="option-divider"></view>
 			<!-- 设置 -->
 			<view class="option-item">
-				<text class="iconfont icon-shezhi"></text>
+				<view class="iconfont icon-shezhi"></view>
 				<text class="option-text">设置</text>
 				<view class="icon-arrow"></view>
 			</view>
@@ -209,28 +209,31 @@
 }
 
 .user-name {
-	font-size: 36rpx;
+	font-size: 26rpx;
 	font-weight: 600;
 	color: #333333;
 }
 
 .vip-tag {
-	background-color: #4f9a42;
-	font-size: 24rpx;
+	background-color: #4F9A42;
+	font-size: 18rpx;
+	font-weight: 600;
 	color: #FFFFFF;
 	border-radius: 8rpx;
-	padding: 2rpx 12rpx;
+	padding: 2rpx 10rpx;
 	margin-left: 12rpx;
 }
 
 .user-phone {
-	font-size: 28rpx;
+	font-size: 22rpx;
+	font-weight: 400;
 	color: #666666;
 	margin-top: 8rpx;
 }
 
 .user-subtitle {
-	font-size: 24rpx;
+	font-size: 20rpx;
+	font-weight: 400;
 	color: #666666;
 	margin-top: 4rpx;
 }
@@ -284,7 +287,7 @@
 }
 
 .vip-title {
-	font-size: 37rpx;
+	font-size: 28rpx;
 	font-weight: 600;
 	color: #FFFFFF;
 	letter-spacing: 4rpx;
@@ -292,7 +295,8 @@
 }
 
 .vip-subtitle {
-	font-size: 22rpx;
+	font-size: 20rpx;
+	font-weight: 400;
 	color: rgba(255,255,255,0.7);
 	margin-top: 16rpx;
 }
@@ -367,7 +371,7 @@
 }
 
 .growth-denom {
-	font-size: 24rpx;
+	font-size: 20rpx;
 	font-weight: 400;
 	color: rgba(255,255,255,0.6);
 	margin-left: 4rpx;
@@ -385,7 +389,7 @@
 .progress-fill {
 	height: 100%;
 	width: 78%;
-	background-color: #00C853;
+	background-color: #4F9A42;
 	border-radius: 6rpx;
 }
 
@@ -423,8 +427,8 @@
 }
 
 .entry-icon-wrap .iconfont {
-	font-size: 80rpx;
-	color: #4f9a42;
+	font-size: 64rpx;
+	color: #4F9A42;
 }
 
 .entry-badge {
@@ -441,14 +445,15 @@
 }
 
 .entry-title {
-	font-size: 32rpx;
+	font-size: 26rpx;
 	font-weight: 600;
 	color: #333333;
 	margin-top: 12rpx;
 }
 
 .entry-subtitle {
-	font-size: 24rpx;
+	font-size: 20rpx;
+	font-weight: 400;
 	color: #666666;
 	margin-top: 4rpx;
 }
@@ -468,12 +473,12 @@
 }
 
 .option-item .iconfont {
-	font-size: 48rpx;
-	color: #4f9a42;
+	font-size: 40rpx;
+	color: #4F9A42;
 }
 
 .option-text {
-	font-size: 32rpx;
+	font-size: 26rpx;
 	font-weight: 400;
 	color: #333333;
 	flex: 1;
