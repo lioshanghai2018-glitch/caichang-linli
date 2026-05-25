@@ -51,7 +51,7 @@
 		<!-- 功能入口网格 -->
 		<view class="entry-grid">
 			<!-- 我的订单 -->
-			<view class="entry-item">
+			<view class="entry-item" @tap="goOrder">
 				<view class="entry-icon-wrap">
 					<view class="iconfont icon-wodedingdan"></view>
 					<view class="entry-badge"><text>3</text></view>
@@ -60,7 +60,7 @@
 				<text class="entry-subtitle">查看订单</text>
 			</view>
 			<!-- 收货地址 -->
-			<view class="entry-item">
+			<view class="entry-item" @tap="goAddress">
 				<view class="entry-icon-wrap">
 					<view class="iconfont icon-shouhuodizhi"></view>
 				</view>
@@ -88,7 +88,7 @@
 		<!-- 功能选项列表 -->
 		<view class="option-list">
 			<!-- 邻里社区 -->
-			<view class="option-item">
+			<view class="option-item" @tap="goNeighbor">
 				<view class="iconfont icon-linlishequ"></view>
 				<text class="option-text">邻里社区</text>
 				<view class="icon-arrow"></view>
@@ -146,6 +146,17 @@
 			},
 			pointsNeeded() {
 				return this.nextLevelGrowth - this.currentGrowth
+			}
+		},
+		methods: {
+			goOrder() {
+				uni.switchTab({ url: '/pages/order/index' })
+			},
+			goAddress() {
+				uni.navigateTo({ url: '/pages/address/index' })
+			},
+			goNeighbor() {
+				uni.navigateTo({ url: '/pages/neighbor/index' })
 			}
 		}
 	}

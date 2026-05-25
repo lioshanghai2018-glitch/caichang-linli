@@ -90,7 +90,7 @@
 					<text class="checkout-total">合计：<text class="checkout-price">¥{{selectedTotal}}</text></text>
 				</view>
 			</view>
-			<view class="checkout-btn">
+			<view class="checkout-btn" @tap="goCheckout">
 				<text>去结算</text>
 			</view>
 		</view>
@@ -187,9 +187,25 @@
 				this.selectedCount = count;
 				this.selectedTotal = total.toFixed(2);
 				this.cartCount = count;
+			},
+			goCheckout() {
+				// 保存已选商品到 localStorage，供购物车页面使用
+				const selectedProducts = this.products.filter(p => p.quantity > 0).map(p => ({
+					name: p.name,
+					spec: p.desc,
+					image: p.image,
+					currentPrice: p.currentPrice,
+					originalPrice: p.originalPrice,
+					quantity: p.quantity,
+					selected: true
+				}))
+				if (selectedProducts.length > 0) {
+					uni.setStorageSync('cartItems', JSON.stringify(selectedProducts))
+				}
+				uni.navigateTo({ url: "/pages/cart/index" })
 			}
-		}
 	}
+}
 </script>
 
 <style>
