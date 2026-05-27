@@ -302,44 +302,135 @@ export default {
         confirmText: '付款失败',
         success: (res) => {
           if (res.cancel) {
-            // 模拟付款成功
-            this.doPaySuccess()
+            // 模拟付款成功 - 状态变为配送中
+            this.doPaySuccess('配送中')
           } else if (res.confirm) {
-            // 模拟付款失败
+            // 模拟付款失败 - 状态变为待支付
             this.doPaySuccess('待支付')
           }
         }
       })
     },
-    doPaySuccess(orderStatus) {
+    callAPI(method, params) {
+      return new Promise((resolve, reject) => {
+        uni.request({
+          url: `https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/${method}`,
+          method: 'POST',
+          data: { method, params },
+          success: (res) => {
+            if (res.data && res.data.code === 0) {
+              resolve(res.data)
+            } else {
+              reject(res.data || { error: '请求失败' })
+            }
+          },
+          fail: (err) => reject(err)
+        })
+      })
+    },
+    async doPaySuccess(orderStatus) {
       orderStatus = orderStatus || '配送中'
-      const newOrder = {
-        id: 'ORD' + Date.now(),
-        shortId: String(Date.now()).slice(-4),
-        fullId: String(Date.now()),
+      const userId = 'user_' + (uni.getStorageSync('userId') || Date.now())
+
+      // 生成完整订单号
+      // 格式：A1 + 年月日时分(10位) + 手机尾号(4位) + 随机码(4位) = 20位
+      const now = new Date()
+      const y = String(now.getFullYear()).slice(-2)
+      const mo = String(now.getMonth() + 1).padStart(2, '0')
+      const da = String(now.getDate()).padStart(2, '0')
+      const h = now.getHours()
+      const mi = String(now.getMinutes()).padStart(2, '0')
+      const s = String(now.getSeconds()).padStart(2, '0')
+      const timeStr = `${y}${mo}${da}${h}${mi}${s}` // 10位时间
+      const phone = this.selectedAddress?.phone || ''
+      const phoneTail = phone.slice(-4) || '0000' // 手机尾号4位
+      const random = String(Math.floor(Math.random() * 10000)).padStart(4, '0') // 随机4位
+      const fullOrderNo = `A1${timeStr}${phoneTail}${random}` // 20位完整订单号
+      // 简化订单号用于显示（去掉A1和手机尾号）
+      const shortOrderNo = `${timeStr}${random}`
+
+      // 构建云端订单数据
+      const cloudOrderData = {
+        orderNo: fullOrderNo,
+        shortOrderNo: shortOrderNo,
+        userId: userId,
+        userPhone: phone,
+        products: this.selectedProducts.map(p => ({
+          name: p.name,
+          spec: p.spec,
+          price: parseFloat(p.currentPrice) || 0,
+          qty: p.qty || 1,
+          image: p.image || ''
+        })).concat(
+          this.addOnProducts.filter(a => a.checked).map(a => ({
+            name: a.name,
+            spec: a.spec,
+            price: parseFloat(a.currentPrice) || 0,
+            qty: 1,
+            image: a.image || ''
+          }))
+        ),
+        totalAmount: parseFloat(this.totalPayable) || 0,
         status: orderStatus,
+        remark: this.remark || '',
         deliveryTime: this.selectedTime,
+        deliveryType: this.deliveryType,
+        timeType: this.timeType,
         payMethod: '微信支付',
-        packFee: '¥0.50',
-        deliveryFee: '¥' + this.computedDeliveryFee,
+        packFee: '¥0',
+        deliveryFee: this.deliveryType === 'self' ? '¥0' : ('¥' + this.computedDeliveryFee),
         coupon: '¥0',
         orderTime: (() => {
-          const d = new Date()
-          const y = d.getFullYear()
-          const mo = String(d.getMonth() + 1).padStart(2, '0')
-          const da = String(d.getDate()).padStart(2, '0')
-          const h = d.getHours()
-          const mi = String(d.getMinutes()).padStart(2, '0')
-          const ampm = h < 12 ? '上午' : '下午'
+          const amp = h < 12 ? '上午' : '下午'
           const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h)
-          return `${y}.${mo}.${da}${ampm}${h12}:${mi}`
+          return `${y}.${mo}.${da}${amp}${h12}:${mi}`
         })(),
         address: {
-          name: this.selectedAddress ? (this.selectedAddress.name || '邻居') : '请选择地址',
+          name: this.selectedAddress ? (this.selectedAddress.name || '邻居') : '邻居',
           phone: this.selectedAddress ? (this.selectedAddress.phone || '') : '',
           address: this.selectedAddress ? (this.selectedAddress.address || '') : '',
           doorNo: this.selectedAddress ? (this.selectedAddress.doorNo || '') : ''
-        },
+        }
+      }
+
+      // 保存云端订单ID
+      let cloudOrderId = null
+      try {
+        // 调用云端API创建订单
+        const res = await this.callAPI('createOrder', cloudOrderData)
+        console.log('云端订单创建成功:', res)
+        if (res && res.data && res.data.id) {
+          cloudOrderId = res.data.id
+        }
+      } catch (e) {
+        console.error('云端订单创建失败，使用本地存储:', e)
+      }
+
+      // 继续本地流程
+      const newOrder = {
+        id: fullOrderNo,
+        shortId: shortOrderNo,
+        fullId: cloudOrderId || fullOrderNo,
+        _id: cloudOrderId,
+        status: orderStatus,
+        deliveryTime: this.selectedTime,
+        deliveryType: this.deliveryType,
+        timeType: this.timeType,
+        payMethod: '微信支付',
+        packFee: '¥0.00',
+        deliveryFee: this.deliveryType === 'self' ? '¥0.00' : ('¥' + this.computedDeliveryFee),
+        coupon: '¥0',
+        orderTime: (() => {
+          const amp = h < 12 ? '上午' : '下午'
+          const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h)
+          return `${y}.${mo}.${da}${amp}${h12}:${mi}`
+        })(),
+        address: this.selectedAddress ? {
+          name: this.selectedAddress.name || '邻居',
+          phone: this.selectedAddress.phone || '',
+          address: this.selectedAddress.address || '',
+          doorNo: this.selectedAddress.doorNo || ''
+        } : { name: '邻居', phone: '', address: '', doorNo: '' },
         remark: this.remark || '',
         total: this.totalPayable,
         actionBtn: '查看详情',
@@ -366,9 +457,10 @@ export default {
       // 清空购物车和结算项
       uni.removeStorageSync('cartItems')
       uni.removeStorageSync('checkoutItems')
-      uni.showToast({ title: '付款成功', icon: 'success' })
+      const successMsg = orderStatus === '待支付' ? '订单待支付' : '付款成功'
+      uni.showToast({ title: successMsg, icon: 'success' })
       setTimeout(() => {
-        uni.switchTab({ url: '/pages/order/index' })
+        uni.reLaunch({ url: '/pages/order/index' })
       }, 1500)
     }
   }

@@ -1,6 +1,8 @@
 @font-face {
   font-family: "iconfont";
-  src: url('/static/fonts/iconfont.ttf') format('truetype');
+  src: url('../fonts/iconfont.woff2?t=1779878824223') format('woff2'),
+       url('../fonts/iconfont.woff?t=1779878824223') format('woff'),
+       url('../fonts/iconfont.ttf?t=1779878824223') format('truetype');
 }
 
 .iconfont {
@@ -11,19 +13,15 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-.icon-logo:before {
-  content: "\e611";
-}
-
-.icon-peisong:before {
+.icon-youhuiquan1:before {
   content: "\e612";
 }
 
-.icon-yixiadan:before {
+.icon-peisong:before {
   content: "\e613";
 }
 
-.icon-yiwancheng:before {
+.icon-yixiadan:before {
   content: "\e614";
 }
 
@@ -33,6 +31,18 @@
 
 .icon-daifukuan:before {
   content: "\e616";
+}
+
+.icon-yiwancheng:before {
+  content: "\e619";
+}
+
+.icon-dingwei:before {
+  content: "\e61a";
+}
+
+.icon-logo:before {
+  content: "\e611";
 }
 
 .icon-jiahao:before {

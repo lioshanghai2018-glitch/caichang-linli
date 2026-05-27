@@ -20,12 +20,36 @@
 
 		<!-- 当前订单列表 -->
 		<scroll-view class="order-list" scroll-y="true" v-if="currentTab === 0">
-			<view class="order-card" v-for="order in currentOrders" :key="order.id" @tap="toggleDetail(order)">
+			<view class="order-card" v-for="order in currentOrders" :key="order._id || order.id" @tap="toggleDetail(order)">
 				<!-- 卡片头部 -->
 				<view class="order-header">
-					<text class="order-id">订单号：{{order.shortId}}</text>
-					<view class="order-status ongoing">
-						<text>{{order.status}}</text>
+					<text class="order-id">订单号：{{(order.orderNo || order.shortOrderNo || order.shortId || order.id).slice(-5)}}</text>
+					<view class="order-status-tag">
+						<text>{{getStepLabel(order)}}</text>
+					</view>
+				</view>
+
+				<!-- 配送进度条 -->
+				<view class="step-progress">
+					<view class="step-item" :class="{ active: true, current: getStepIndex(order) === 0 }">
+						<view class="iconfont icon-daifukuan" v-if="isPendingStatus(order)"></view>
+						<view class="iconfont icon-yixiadan" v-else></view>
+						<text class="step-label">{{isPendingStatus(order) ? '待付款' : '已下单'}}</text>
+					</view>
+					<view class="step-line" :class="{ active: getStepIndex(order) >= 1 }"></view>
+					<view class="step-item" :class="{ active: getStepIndex(order) >= 1, current: getStepIndex(order) === 1 }">
+						<view class="iconfont icon-fenjian"></view>
+						<text class="step-label">分拣中</text>
+					</view>
+					<view class="step-line" :class="{ active: getStepIndex(order) >= 2 }"></view>
+					<view class="step-item" :class="{ active: getStepIndex(order) >= 2, current: getStepIndex(order) === 2 }">
+						<view class="iconfont icon-peisong"></view>
+						<text class="step-label">配送中</text>
+					</view>
+					<view class="step-line" :class="{ active: getStepIndex(order) >= 3 }"></view>
+					<view class="step-item" :class="{ active: getStepIndex(order) >= 3, current: getStepIndex(order) === 3 }">
+						<view class="iconfont icon-yiwancheng"></view>
+						<text class="step-label">已完成</text>
 					</view>
 				</view>
 
@@ -64,6 +88,10 @@
 							<text class="info-value coupon">{{order.coupon}}</text>
 						</view>
 						<view class="info-row">
+							<text class="info-label">订单号</text>
+							<text class="info-value">{{order.orderNo}}</text>
+						</view>
+						<view class="info-row">
 							<text class="info-label">下单时间</text>
 							<text class="info-value time">{{order.orderTime}}</text>
 						</view>
@@ -80,7 +108,7 @@
 
 				<!-- 底部：总价 + 按钮 -->
 				<view class="order-footer">
-					<text class="total-text">实付 <text class="total-price">¥{{order.total}}</text></text>
+					<text class="total-text">实付 <text class="total-price">¥{{order.total || order.totalAmount}}</text></text>
 					<view class="footer-btns" v-if="order.status === '待支付' || order.status === 'pending'">
 						<view class="action-btn" @tap="goPay(order)"><text>去付款</text></view>
 						<view class="action-btn cancel" @tap="cancelOrder(order)"><text>取消订单</text></view>
@@ -94,14 +122,17 @@
 
 		<!-- 历史订单列表 -->
 		<scroll-view class="order-list" scroll-y="true" v-if="currentTab === 1">
-			<view class="order-card" v-for="order in historyOrders" :key="order.id" @tap="toggleDetail(order)">
+			<view class="order-card" v-for="order in historyOrders" :key="order._id || order.id" @tap="toggleDetail(order)">
 				<!-- 卡片头部 -->
 				<view class="order-header">
 					<view class="order-header-left">
-						<text class="order-id">订单号：{{order.shortId}}</text>
-						<view class="order-status done">
-							<text>{{order.status}}</text>
+						<text class="order-id">订单号：{{(order.orderNo || order.shortOrderNo || order.shortId || order.id).slice(-5)}}</text>
+						<view class="order-status" :class="getHistoryStatusClass(order)">
+							<text>{{getHistoryStatusLabel(order)}}</text>
 						</view>
+					</view>
+					<view class="delete-btn" @tap.stop="deleteOrder(order)">
+						<view class="iconfont icon-shezhi"></view>
 					</view>
 				</view>
 
@@ -113,7 +144,6 @@
 						<text class="product-spec">{{product.spec}}</text>
 					</view>
 					<view class="product-price-wrap">
-						<text class="product-original">¥{{product.originalPrice}}</text>
 						<text class="product-price">¥{{product.price}}</text>
 						<text class="product-qty">x{{product.qty}}</text>
 					</view>
@@ -133,26 +163,21 @@
 						</view>
 						<view class="fee-row total-fee-row">
 							<text class="fee-label">实付</text>
-							<text class="total-price">¥{{order.total}}</text>
+							<text class="total-price">¥{{order.total || order.totalAmount}}</text>
+						</view>
+						<view class="info-row">
+							<text class="info-label">订单号</text>
+							<text class="info-value">{{order.orderNo}}</text>
 						</view>
 						<view class="info-row">
 							<text class="info-label">下单时间</text>
 							<text class="info-value time">{{order.orderTime}}</text>
 						</view>
-						<view class="info-row">
+						<view class="info-row" v-if="order.deliveryTime">
 							<text class="info-label">送达时间</text>
 							<text class="info-value time">{{order.deliveryTime}}</text>
 						</view>
-						<view class="info-row">
-							<text class="info-label">订单号</text>
-							<view class="order-no-wrap">
-								<text class="info-value">{{order.fullId}}</text>
-								<view class="copy-btn" @tap.stop="copyOrderNo(order.fullId)">
-									<text>复制</text>
-								</view>
-							</view>
-						</view>
-						<view class="info-row">
+						<view class="info-row" v-if="order.address">
 							<text class="info-label">收货地址</text>
 							<text class="info-value address">{{order.address.phone}} {{order.address.address}}{{order.address.doorNo}}</text>
 						</view>
@@ -178,144 +203,191 @@
 </template>
 
 <script>
-	export default {
-		data() {
-			return {
-				currentTab: 0,
-				currentOrders: [
-					{
-						id: 1,
-						shortId: '1023',
-						status: '配送中',
-						deliveryTime: '18:30',
-						payMethod: '微信支付',
-						packFee: '¥0.50',
-						deliveryFee: '¥5.00',
-						coupon: '-¥2',
-						orderTime: '2026.05.12 10:58',
-						address: '丽江市古城区大研街道XX小区3栋101室',
-						remark: '请轻敲门',
-						total: '25.50',
-						actionBtn: '微信支付',
-						expanded: false,
-						products: [
-							{
-								name: '有机西红柿',
-								spec: '约500g/份',
-								price: '15.80',
-								qty: 2,
-								image: '/static/images/有机西红柿.png'
-							},
-							{
-								name: '小青菜',
-								spec: '约300g/份',
-								price: '6.50',
-								qty: 1,
-								image: '/static/images/有机青菜.png'
-							}
-						]
-					}
-				],
-				historyOrders: [
-					{
-						id: 2,
-						shortId: '1019',
-						fullId: '1725056890123456789',
-						status: '已完成',
-						store: '和业柏华店',
-						payMethod: '微信支付',
-						packFee: '¥0.50',
-						deliveryFee: '¥5.00',
-						total: '68.50',
-						orderTime: '2026.05.10 12:30',
-						deliveryTime: '2026.05.10 13:15',
-						address: '丽江市古城区大研街道XX小区3栋101室',
-						expanded: false,
-						products: [
-							{
-								name: '有机西红柿',
-								spec: '约500g/份',
-								originalPrice: '20.00',
-								price: '15.80',
-								qty: 2,
-								image: '/static/images/有机西红柿.png'
-							},
-							{
-								name: '小青菜',
-								spec: '约300g/份',
-								originalPrice: '9.00',
-								price: '6.50',
-								qty: 1,
-								image: '/static/images/有机青菜.png'
-							}
-						]
-					}
-				]
-			}
-		},
-		onShow() {
-			this.syncOrders()
-		},
-		methods: {
-			syncOrders() {
-				try {
-					const data = uni.getStorageSync('order_list')
-					if (data) {
-						const list = JSON.parse(data)
-						if (Array.isArray(list) && list.length > 0) {
-							this.currentOrders = list.filter(o => o.status === '配送中' || o.status === '待支付' || o.status === 'pending')
-							this.historyOrders = list.filter(o => o.status === '已完成' || o.status === '已取消')
-						}
-					}
-				} catch (e) {}
-			},
-			switchTab(index) {
-				this.currentTab = index
-			},
-			toggleDetail(order) {
-				order.expanded = !order.expanded
-			},
-			copyOrderNo(fullId) {
-				uni.setClipboardData({
-					data: fullId,
-					success: () => {
-						uni.showToast({ title: '已复制', icon: 'success' })
-					}
-				})
-			},
-			makeCall() {
-				uni.makePhoneCall({ phoneNumber: '10086' })
-			},
-			goPay(order) {
-				uni.showToast({ title: '去付款功能开发中', icon: 'none' })
-			},
-			cancelOrder(order) {
-				uni.showModal({
-					title: '确认取消',
-					content: '确定要取消该订单吗？',
+export default {
+	data() {
+		return {
+			currentTab: 0,
+			currentOrders: [],
+			historyOrders: [],
+			userId: 'user_' + (uni.getStorageSync('userId') || Date.now()),
+			loading: false
+		}
+	},
+	onShow() {
+		// 生成用户ID并存储
+		if (!uni.getStorageSync('userId')) {
+			uni.setStorageSync('userId', this.userId.replace('user_', ''))
+		}
+		this.syncOrders()
+	},
+	methods: {
+		// 调用云端API
+		callAPI(method, params) {
+			return new Promise((resolve, reject) => {
+				uni.request({
+					url: `https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/${method}`,
+					method: 'POST',
+					data: { method, params },
 					success: (res) => {
-						if (res.confirm) {
-							order.status = '已取消'
-							const list = uni.getStorageSync('order_list') ? JSON.parse(uni.getStorageSync('order_list')) : []
-							const idx = list.findIndex(o => o.id === order.id)
-							if (idx > -1) {
-								list[idx].status = '已取消'
-								uni.setStorageSync('order_list', JSON.stringify(list))
-							}
+						if (res.data && res.data.code === 0) {
+							resolve(res.data)
+						} else {
+							reject(res.data || { error: '请求失败' })
+						}
+					},
+					fail: (err) => reject(err)
+				})
+			})
+		},
+		async syncOrders() {
+			this.loading = true
+			try {
+				const res = await this.callAPI('getOrders', { userId: this.userId })
+				const list = res.data || []
+				console.log('订单列表:', list)
+				// 按状态分类
+				this.currentOrders = list.filter(o => ['pending', 'confirmed', 'delivering', '待支付', '已接单', '配送中'].includes(o.status))
+				this.historyOrders = list.filter(o => ['completed', 'cancelled', 'refunded', '已完成', '已取消', '已退款'].includes(o.status))
+			} catch (e) {
+				console.error('获取订单失败:', e)
+				// 失败时尝试从本地存储读取
+				this.loadLocalOrders()
+			}
+			this.loading = false
+		},
+		loadLocalOrders() {
+			try {
+				const data = uni.getStorageSync('order_list')
+				if (data) {
+					const list = JSON.parse(data)
+					if (Array.isArray(list) && list.length > 0) {
+						this.currentOrders = list.filter(o => o.status === '配送中' || o.status === '待支付' || o.status === 'pending')
+						this.historyOrders = list.filter(o => o.status === '已完成' || o.status === '已取消')
+					}
+				}
+			} catch (e) {}
+		},
+		switchTab(index) {
+			this.currentTab = index
+		},
+		toggleDetail(order) {
+			order.expanded = !order.expanded
+		},
+		copyOrderNo(fullId) {
+			uni.setClipboardData({
+				data: fullId,
+				success: () => {
+					uni.showToast({ title: '已复制', icon: 'success' })
+				}
+			})
+		},
+		goPay(order) {
+			uni.showToast({ title: '去付款功能开发中', icon: 'none' })
+		},
+		async cancelOrder(order) {
+			uni.showModal({
+				title: '确认取消',
+				content: '确定要取消该订单吗？',
+				success: async (res) => {
+					if (res.confirm) {
+						try {
+							// 调用云端API取消订单
+							await this.callAPI('updateOrderStatus', { id: order._id, status: 'cancelled' })
+							uni.showToast({ title: '订单已取消', icon: 'success' })
+						} catch (e) {
+							console.error('云端取消失败:', e)
+						}
+						// 更新本地
+						order.status = 'cancelled'
+						this.syncOrders()
+					}
+				}
+			})
+		},
+		async afterSale(order) {
+			uni.showModal({
+				title: '申请售后',
+				content: '请输入退款原因',
+				editable: true,
+				placeholderText: '商品损坏/不想买了等',
+				success: async (res) => {
+					if (res.confirm) {
+						try {
+							const reason = res.content || '用户申请退款'
+							await this.callAPI('applyRefund', { id: order._id, reason })
+							uni.showToast({ title: '退款申请已提交', icon: 'success' })
 							this.syncOrders()
-							uni.showToast({ title: '订单已取消', icon: 'none' })
+						} catch (e) {
+							console.error('申请售后失败:', e)
+							uni.showToast({ title: '申请失败', icon: 'none' })
 						}
 					}
-				})
-			},
-			afterSale() {
-				uni.showToast({ title: '申请售后', icon: 'none' })
-			},
-			reOrder() {
-				uni.showToast({ title: '再来一单', icon: 'none' })
+				}
+			})
+		},
+		reOrder() {
+			uni.showToast({ title: '再来一单功能开发中', icon: 'none' })
+		},
+		isPendingStatus(order) {
+			return ['pending', '待支付'].includes(order.status)
+		},
+		getStepIndex(order) {
+			const map = {
+				'pending': 0, '待支付': 0,
+				'confirmed': 1, '已接单': 1,
+				'delivering': 2, '配送中': 2,
+				'completed': 3, '已完成': 3,
+				'cancelled': -1, '已取消': -1
 			}
+			return map[order.status] ?? 0
+		},
+		getStepLabel(order) {
+			const map = {
+				'pending': '待付款', '待支付': '待付款',
+				'confirmed': '分拣中', '已接单': '分拣中',
+				'delivering': '配送中', '配送中': '配送中',
+				'completed': '已完成', '已完成': '已完成',
+				'cancelled': '已取消', '已取消': '已取消'
+			}
+			return map[order.status] || '处理中'
+		},
+		// 判断第一步是否active（待付款或已下单都算）
+		isFirstStepActive(order) {
+			return true // 第一步永远绿色
+		},
+		getHistoryStatusLabel(order) {
+			const map = {
+				'completed': '已完成', '已完成': '已完成',
+				'cancelled': '已取消', '已取消': '已取消',
+				'refunded': '已退款', '已退款': '已退款'
+			}
+			return map[order.status] || order.status
+		},
+		getHistoryStatusClass(order) {
+			if (['completed', '已完成'].includes(order.status)) {
+				return 'done'
+			}
+			return 'cancelled'
+		},
+		deleteOrder(order) {
+			uni.showModal({
+				title: '确认删除',
+				content: '确定要删除该订单吗？',
+				success: async (res) => {
+					if (res.confirm) {
+						try {
+							await this.callAPI('deleteOrder', { id: order._id })
+						} catch (e) {
+							console.error('删除失败:', e)
+						}
+						this.syncOrders()
+						uni.showToast({ title: '已删除', icon: 'success' })
+					}
+				}
+			})
 		}
 	}
+}
 </script>
 
 <style>
@@ -428,6 +500,29 @@
 	font-size: 24rpx;
 	font-weight: 600;
 	color: #4f9a42;
+}
+
+.order-status.cancelled {
+	background-color: #F5F5F5;
+}
+
+.order-status.cancelled text {
+	font-size: 24rpx;
+	font-weight: 600;
+	color: #999;
+}
+
+.delete-btn {
+	width: 44rpx;
+	height: 44rpx;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.delete-btn .iconfont {
+	font-size: 40rpx;
+	color: #999;
 }
 
 /* 门店行 */
@@ -636,8 +731,8 @@
 }
 
 .service-tip-text {
-	font-size: 28rpx;
-	color: #666666;
+	font-size: 22rpx;
+	color: #999999;
 	flex: 1;
 }
 
@@ -693,5 +788,77 @@
 .footer-btns {
 	display: flex;
 	gap: 16rpx;
+}
+
+/* 步骤进度条 */
+.step-progress {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24rpx 16rpx;
+	margin-top: 16rpx;
+}
+
+.step-item {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-width: 80rpx;
+}
+
+.step-item .iconfont {
+	font-size: 80rpx;
+}
+
+.step-item.active .iconfont {
+	color: #528A59;
+}
+
+.step-item:not(.active) .iconfont {
+	color: #BEBDBE;
+}
+
+.step-item.current .iconfont {
+	text-shadow: 0 0 8rpx rgba(82, 138, 89, 0.4);
+}
+
+.step-label {
+	font-size: 20rpx;
+	margin-top: 8rpx;
+}
+
+.step-item.active .step-label {
+	color: #333;
+}
+
+.step-item:not(.active) .step-label {
+	color: #BEBDBE;
+}
+
+.step-line {
+	flex: 1;
+	height: 4rpx;
+	background: #BEBDBE;
+	margin: 0 4rpx;
+	margin-bottom: 30rpx;
+	min-width: 20rpx;
+}
+
+.step-line.active {
+	background: #528A59;
+}
+
+/* 状态标签 */
+.order-status-tag {
+	background: #528A59;
+	color: #fff;
+	font-size: 22rpx;
+	padding: 6rpx 20rpx;
+	border-radius: 24rpx;
+}
+
+.order-status-tag text {
+	font-size: 22rpx;
+	font-weight: 600;
 }
 </style>

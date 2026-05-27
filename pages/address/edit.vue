@@ -72,7 +72,7 @@ export default {
         doorNo: '',
         isDefault: false
       },
-      communityList: ['阳光小区', '四季花城', '幸福里', '锦绣花园', '金地名郡']
+      communityList: []
     }
   },
   onLoad(options) {
@@ -84,8 +84,23 @@ export default {
         this.form = { ...addr }
       }
     }
+    this.loadCommunities()
   },
   methods: {
+    async loadCommunities() {
+      try {
+        const res = await uni.request({
+          url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getCommunities',
+          method: 'POST',
+          data: { method: 'getCommunities', params: {} }
+        })
+        if (res.data && res.data.code === 0) {
+          this.communityList = (res.data.data || []).map(c => c.name)
+        }
+      } catch (e) {
+        console.error('获取小区列表失败:', e)
+      }
+    },
     goBack() {
       uni.navigateBack()
     },

@@ -6,16 +6,19 @@
         <text class="back-arrow">‹</text>
       </view>
       <text class="nav-title">选择收货地址</text>
+      <view class="manage-btn" @tap="toggleManageMode">
+        <view class="iconfont icon-shezhi"></view>
+      </view>
     </view>
 
     <!-- 地址列表 -->
     <view class="address-list" v-if="addressList.length > 0">
       <view
         class="address-card"
-        :class="{ selected: selectedId === item.id }"
+        :class="{ selected: selectedId === item.id, manage: isManageMode }"
         v-for="item in addressList"
         :key="item.id"
-        @tap="selectAddress(item)"
+        @tap="handleCardTap(item)"
       >
         <view class="address-main">
           <view class="address-top">
@@ -29,7 +32,10 @@
             <text class="address-text">{{item.address}}{{item.doorNo}}</text>
           </view>
         </view>
-        <view class="arrow">›</view>
+        <view class="check-icon" v-if="isManageMode && selectedId === item.id">
+          <text>✓</text>
+        </view>
+        <view class="arrow" v-else-if="!isManageMode">›</view>
       </view>
     </view>
 
@@ -39,23 +45,32 @@
       <text class="empty-sub">点击下方按钮新增地址</text>
     </view>
 
-    <!-- 底部新增按钮 -->
-    <view class="bottom-bar">
+    <!-- 底部按钮 -->
+    <view class="bottom-bar" v-if="!isManageMode">
       <view class="add-btn" @tap="goAddAddress">
         <text class="add-btn-text">+ 新增地址</text>
+      </view>
+    </view>
+    <view class="bottom-bar manage-bar" v-else>
+      <view class="half-btn edit" @tap="goEditSelected">
+        <text>编辑</text>
+      </view>
+      <view class="half-btn delete" @tap="deleteSelected">
+        <text>删除</text>
       </view>
     </view>
   </view>
 </template>
 
 <script>
-import { getAddressList } from '@/utils/address.js'
+import { getAddressList, deleteAddress } from '@/utils/address.js'
 
 export default {
   data() {
     return {
       selectedId: '',
-      addressList: []
+      addressList: [],
+      isManageMode: false
     }
   },
   onLoad() {
@@ -70,14 +85,35 @@ export default {
     },
     loadAddresses() {
       this.addressList = getAddressList()
-      // 找出当前选中的
       const defaultAddr = this.addressList.find(a => a.isDefault)
       if (defaultAddr) {
         this.selectedId = defaultAddr.id
       }
     },
+    toggleManageMode() {
+      this.isManageMode = !this.isManageMode
+      if (!this.isManageMode) {
+        // 退出管理模式下，恢复选中默认地址
+        const defaultAddr = this.addressList.find(a => a.isDefault)
+        if (defaultAddr) {
+          this.selectedId = defaultAddr.id
+        }
+      }
+    },
+    handleCardTap(item) {
+      if (this.isManageMode) {
+        // 管理模式下切换选中
+        if (this.selectedId === item.id) {
+          this.selectedId = ''
+        } else {
+          this.selectedId = item.id
+        }
+      } else {
+        // 非管理模式下选中地址
+        this.selectAddress(item)
+      }
+    },
     selectAddress(item) {
-      // 保存选中地址到全局数据，供结算页使用
       const pages = getCurrentPages()
       const prevPage = pages[pages.length - 2]
       if (prevPage && prevPage.route === 'pages/checkout/index') {
@@ -88,6 +124,34 @@ export default {
     },
     goAddAddress() {
       uni.navigateTo({ url: '/pages/address/edit' })
+    },
+    goEditSelected() {
+      const item = this.addressList.find(a => a.id === this.selectedId)
+      if (!item) {
+        uni.showToast({ title: '请先选择地址', icon: 'none' })
+        return
+      }
+      uni.navigateTo({ url: `/pages/address/edit?id=${item.id}` })
+    },
+    deleteSelected() {
+      const item = this.addressList.find(a => a.id === this.selectedId)
+      if (!item) {
+        uni.showToast({ title: '请先选择地址', icon: 'none' })
+        return
+      }
+      uni.showModal({
+        title: '确认删除',
+        content: '确定要删除该地址吗？',
+        success: (res) => {
+          if (res.confirm) {
+            deleteAddress(item.id)
+            this.loadAddresses()
+            this.isManageMode = false
+            this.selectedId = ''
+            uni.showToast({ title: '已删除', icon: 'success' })
+          }
+        }
+      })
     }
   }
 }
@@ -128,7 +192,19 @@ export default {
   color: #333;
   flex: 1;
   text-align: center;
-  margin-right: 56rpx;
+}
+
+.manage-btn {
+  width: 56rpx;
+  height: 56rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.manage-btn .iconfont {
+  font-size: 40rpx;
+  color: #666;
 }
 
 .address-list {
@@ -142,9 +218,18 @@ export default {
   margin-bottom: 16rpx;
   display: flex;
   align-items: center;
+  justify-content: space-between;
 }
 
 .address-card.selected {
+  border: 2rpx solid #4F9A42;
+}
+
+.address-card.manage {
+  border: 2rpx solid #E0E0E0;
+}
+
+.address-card.manage.selected {
   border: 2rpx solid #4F9A42;
 }
 
@@ -196,6 +281,22 @@ export default {
   margin-left: 16rpx;
 }
 
+.check-icon {
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 50%;
+  background-color: #4F9A42;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 16rpx;
+}
+
+.check-icon text {
+  font-size: 28rpx;
+  color: #FFF;
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -238,5 +339,41 @@ export default {
   font-size: 32rpx;
   font-weight: 600;
   color: #FFFFFF;
+}
+
+.manage-bar {
+  display: flex;
+  gap: 20rpx;
+}
+
+.half-btn {
+  flex: 1;
+  height: 88rpx;
+  border-radius: 40rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.half-btn text {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.half-btn.edit {
+  background-color: #4F9A42;
+}
+
+.half-btn.edit text {
+  color: #FFFFFF;
+}
+
+.half-btn.delete {
+  background-color: #F5F5F5;
+  border: 2rpx solid #E0E0E0;
+}
+
+.half-btn.delete text {
+  color: #666;
 }
 </style>
