@@ -7,7 +7,7 @@
           <text class="back-arrow">‹</text>
         </view>
         <view class="address-input" @tap="selectAddress">
-          <text class="addr-icon">📍</text>
+          <text class="addr-icon iconfont icon-dingwei"></text>
           <text class="addr-text">{{ selectedAddress ? selectedAddress.address + selectedAddress.doorNo : "点击选择收货地址" }}</text>
         </view>
         <view class="delivery-switch">
@@ -20,10 +20,7 @@
         </view>
       </view>
       <view class="time-tabs">
-        <view class="time-tab" :class="{ active: timeType === 'today' }" @tap="switchTime('today')">
-          <text class="tab-check">✓</text>
-          <text>{{ deliveryType === 'self' ? '今日自提' : '今日配送' }}</text>
-        </view>
+        <!-- 暂时隐藏今日选项，后期需要再打开 -->
         <view class="time-tab" :class="{ active: timeType === 'tomorrow' }" @tap="switchTime('tomorrow')">
           <text class="tab-check">✓</text>
           <text>{{ deliveryType === 'self' ? '明日自提' : '明日配送' }}</text>
@@ -83,13 +80,12 @@
     <view class="card">
       <view class="info-row" @tap="showCoupon">
         <view class="info-left">
-          <text class="info-icon">🏷️</text>
+          <text class="info-icon iconfont icon-youhuiquan"></text>
           <text class="info-title">优惠券</text>
         </view>
         <text class="info-right">暂无可用</text>
       </view>
       <view class="info-notice">
-        <text class="notice-icon">⚠️</text>
         <text class="notice-text">优惠券不与满减、满赠、商品优惠等活动共享</text>
       </view>
     </view>
@@ -98,7 +94,7 @@
     <view class="card">
       <view class="info-row">
         <view class="info-left">
-          <text class="info-icon">🎁</text>
+          <text class="info-icon iconfont icon-yaoqinghaoyou"></text>
           <text class="info-title">礼品卡</text>
         </view>
         <text class="info-right">暂无可用礼品卡</text>
@@ -109,7 +105,7 @@
     <view class="card">
       <view class="info-row" @tap="toggleFeeInfo">
         <view class="info-left">
-          <text class="info-icon">🚚</text>
+          <text class="info-icon iconfont icon-peisong"></text>
           <text class="info-title">{{ deliveryType === 'self' ? '自提费' : '配送费' }}</text>
         </view>
         <view class="info-right-with-arrow">
@@ -118,10 +114,8 @@
         </view>
       </view>
       <view class="fee-rules" v-if="showFeeInfo">
-        <view class="fee-rule-item"><text class="fee-rule-dot">•</text><text class="fee-rule-text">今日自提：免配送费</text></view>
         <view class="fee-rule-item"><text class="fee-rule-dot">•</text><text class="fee-rule-text">明日自提：免配送费</text></view>
         <view class="fee-rule-item"><text class="fee-rule-dot">•</text><text class="fee-rule-text">明日配送：免配送费</text></view>
-        <view class="fee-rule-item"><text class="fee-rule-dot">•</text><text class="fee-rule-text">今日配送：¥2.00（订单≥¥20时免配送费）</text></view>
       </view>
     </view>
 
@@ -164,7 +158,7 @@ export default {
     return {
       deliveryType: 'self',
       selectedAddress: null,
-      timeType: 'today',
+      timeType: 'tomorrow',
       selectedTime: '09:00',
       discount: 0,
       deliveryFee: '0.00',
@@ -302,8 +296,9 @@ export default {
         confirmText: '付款失败',
         success: (res) => {
           if (res.cancel) {
-            // 模拟付款成功 - 状态变为配送中
-            this.doPaySuccess('配送中')
+            // 配送订单付款成功后直接设为"已接单"，触发云函数自动分配骑手
+            // 自提订单保持"已接单"（无需骑手）
+            this.doPaySuccess('已接单')
           } else if (res.confirm) {
             // 模拟付款失败 - 状态变为待支付
             this.doPaySuccess('待支付')
@@ -517,8 +512,9 @@ page {
 }
 
 .addr-icon {
-  font-size: 24rpx;
+  font-size: 44rpx;
   margin-right: 8rpx;
+  color: #4F9A42;
 }
 
 .addr-text {
@@ -818,8 +814,9 @@ page {
 }
 
 .info-icon {
-  font-size: 32rpx;
+  font-size: 36rpx;
   margin-right: 12rpx;
+  color: #4F9A42;
 }
 
 .info-title {

@@ -8,10 +8,8 @@
 			</view>
 		</view>
 
-		<!-- 邻里插图占位 -->
-		<view class="banner-placeholder">
-			<text>邻里插图占位</text>
-		</view>
+		<!-- 邻里横幅 -->
+		<image class="banner-image" src="/static/images/banner_neighbor.jpg" mode="aspectFill"></image>
 
 		<!-- 分类标签栏 -->
 		<scroll-view class="tag-bar" scroll-x="true">
@@ -224,20 +222,12 @@
 	color: #999999;
 }
 
-/* 邻里插图占位 */
-.banner-placeholder {
+/* 邻里横幅 */
+.banner-image {
 	margin: 0 24rpx 20rpx;
+	width: calc(100% - 48rpx);
 	height: 300rpx;
-	background-color: #E0E0E0;
 	border-radius: 16rpx;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.banner-placeholder text {
-	font-size: 28rpx;
-	color: #999999;
 }
 
 /* 分类标签栏 */

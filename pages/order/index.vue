@@ -19,7 +19,15 @@
 		</view>
 
 		<!-- 当前订单列表 -->
-		<scroll-view class="order-list" scroll-y="true" v-if="currentTab === 0">
+		<scroll-view
+			class="order-list"
+			scroll-y="true"
+			refresher-enabled="true"
+			:refresher-triggered="refreshing"
+			@refresherrefresh="onRefresh"
+			refresher-default-style="none"
+			v-if="currentTab === 0"
+		>
 			<view class="order-card" v-for="order in currentOrders" :key="order._id || order.id" @tap="toggleDetail(order)">
 				<!-- 卡片头部 -->
 				<view class="order-header">
@@ -210,7 +218,9 @@ export default {
 			currentOrders: [],
 			historyOrders: [],
 			userId: 'user_' + (uni.getStorageSync('userId') || Date.now()),
-			loading: false
+			loading: false,
+			refreshing: false,
+			isRefreshing: false // 防重标志
 		}
 	},
 	onShow() {
@@ -245,8 +255,13 @@ export default {
 				const res = await this.callAPI('getOrders', { userId: this.userId })
 				const list = res.data || []
 				console.log('订单列表:', list)
-				// 按状态分类
-				this.currentOrders = list.filter(o => ['pending', 'confirmed', 'delivering', '待支付', '已接单', '配送中'].includes(o.status))
+				// 按状态分类（包含 deliveryStatus 判断）
+				this.currentOrders = list.filter(o => {
+					// 使用 deliveryStatus 判断
+					if (['accepted', 'delivering'].includes(o.deliveryStatus)) return true
+					// 兼容原有 status
+					return ['pending', 'confirmed', 'delivering', '待支付', '已接单', '配送中'].includes(o.status)
+				})
 				this.historyOrders = list.filter(o => ['completed', 'cancelled', 'refunded', '已完成', '已取消', '已退款'].includes(o.status))
 			} catch (e) {
 				console.error('获取订单失败:', e)
@@ -254,6 +269,21 @@ export default {
 				this.loadLocalOrders()
 			}
 			this.loading = false
+		},
+		async onRefresh() {
+			// 防重：如果正在刷新中，直接返回
+			if (this.isRefreshing) {
+				this.refreshing = false
+				return
+			}
+			this.isRefreshing = true
+			this.refreshing = true
+			await this.syncOrders()
+			this.refreshing = false
+			// 延迟解除防重，避免快速连续触发
+			setTimeout(() => {
+				this.isRefreshing = false
+			}, 1000)
 		},
 		loadLocalOrders() {
 			try {
@@ -332,6 +362,12 @@ export default {
 			return ['pending', '待支付'].includes(order.status)
 		},
 		getStepIndex(order) {
+			// 优先使用 deliveryStatus（骑手端配送状态）
+			if (order.deliveryStatus === 'accepted') return 1 // 待取货 → 分拣中
+			if (order.deliveryStatus === 'delivering') return 2 // 配送中
+			if (order.deliveryStatus === 'completed') return 3 // 已完成
+
+			// 兼容原有 status 逻辑
 			const map = {
 				'pending': 0, '待支付': 0,
 				'confirmed': 1, '已接单': 1,
@@ -342,6 +378,12 @@ export default {
 			return map[order.status] ?? 0
 		},
 		getStepLabel(order) {
+			// 优先使用 deliveryStatus
+			if (order.deliveryStatus === 'accepted') return '分拣中'
+			if (order.deliveryStatus === 'delivering') return '配送中'
+			if (order.deliveryStatus === 'completed') return '已完成'
+
+			// 兼容原有 status
 			const map = {
 				'pending': '待付款', '待支付': '待付款',
 				'confirmed': '分拣中', '已接单': '分拣中',
@@ -860,5 +902,14 @@ export default {
 .order-status-tag text {
 	font-size: 22rpx;
 	font-weight: 600;
+}
+
+/* 自定义下拉刷新样式 */
+.order-list ::v-deep .uni-scroll-refresher {
+	background: transparent !important;
+}
+
+.order-list ::v-deep . refresher-inner {
+	color: #4F9A42;
 }
 </style>
