@@ -1,0 +1,121 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "数据看板"
+      }
+    },
+    {
+      "path": "pages/orders/index",
+      "style": {
+        "navigationBarTitleText": "订单管理"
+      }
+    },
+    {
+      "path": "pages/products/index",
+      "style": {
+        "navigationBarTitleText": "商品管理"
+      }
+    },
+    {
+      "path": "pages/certs/index",
+      "style": {
+        "navigationBarTitleText": "认证管理"
+      }
+    },
+    {
+      "path": "pages/mine/index",
+      "style": {
+        "navigationBarTitleText": "我的"
+      }
+    },
+    {
+      "path": "pages/riders/index",
+      "style": {
+        "navigationBarTitleText": "骑手管理"
+      }
+    },
+    {
+      "path": "pages/communities/index",
+      "style": {
+        "navigationBarTitleText": "小区管理"
+      }
+    },
+    {
+      "path": "pages/categories/index",
+      "style": {
+        "navigationBarTitleText": "分类管理"
+      }
+    },
+    {
+      "path": "pages/flash-sale/index",
+      "style": {
+        "navigationBarTitleText": "特惠管理"
+      }
+    },
+    {
+      "path": "pages/posts/index",
+      "style": {
+        "navigationBarTitleText": "帖子管理"
+      }
+    },
+    {
+      "path": "pages/chat/index",
+      "style": {
+        "navigationBarTitleText": "客服消息"
+      }
+    },
+    {
+      "path": "pages/chat/conversation",
+      "style": {
+        "navigationBarTitleText": "聊天"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "买菜商家",
+    "navigationBarBackgroundColor": "#FFFFFF",
+    "backgroundColor": "#F5F1EB"
+  },
+  "tabBar": {
+    "color": "#999999",
+    "selectedColor": "#4F9A42",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "static/tabs/home.png",
+        "selectedIconPath": "static/tabs/home-active.png"
+      },
+      {
+        "pagePath": "pages/orders/index",
+        "text": "订单",
+        "iconPath": "static/tabs/order.png",
+        "selectedIconPath": "static/tabs/order-active.png"
+      },
+      {
+        "pagePath": "pages/products/index",
+        "text": "商品",
+        "iconPath": "static/tabs/product.png",
+        "selectedIconPath": "static/tabs/product-active.png"
+      },
+      {
+        "pagePath": "pages/chat/index",
+        "text": "客服",
+        "iconPath": "static/tabs/cert.png",
+        "selectedIconPath": "static/tabs/cert-active.png"
+      },
+      {
+        "pagePath": "pages/mine/index",
+        "text": "我的",
+        "iconPath": "static/tabs/mine.png",
+        "selectedIconPath": "static/tabs/mine-active.png"
+      }
+    ]
+  },
+  "uniIdRouter": {}
+}
