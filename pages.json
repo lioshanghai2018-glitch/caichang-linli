@@ -1,0 +1,65 @@
+{
+	"pages": [
+		{
+			"path": "pages/login/index",
+			"style": {
+				"navigationBarTitleText": "骑手登录"
+			}
+		},
+		{
+			"path": "pages/pending/index",
+			"style": {
+				"navigationBarTitleText": "待取货"
+			}
+		},
+		{
+			"path": "pages/delivering/index",
+			"style": {
+				"navigationBarTitleText": "配送中"
+			}
+		},
+		{
+			"path": "pages/completed/index",
+			"style": {
+				"navigationBarTitleText": "已完成"
+			}
+		},
+		{
+			"path": "pages/mine/index",
+			"style": {
+				"navigationBarTitleText": "我的"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "配送员",
+		"navigationBarBackgroundColor": "#FFFFFF",
+		"backgroundColor": "#F5F5F5"
+	},
+	"tabBar": {
+		"color": "#999999",
+		"selectedColor": "#4CAF50",
+		"backgroundColor": "#FFFFFF",
+		"borderStyle": "black",
+		"list": [
+			{
+				"pagePath": "pages/pending/index",
+				"text": "待取货"
+			},
+			{
+				"pagePath": "pages/delivering/index",
+				"text": "配送中"
+			},
+			{
+				"pagePath": "pages/completed/index",
+				"text": "已完成"
+			},
+			{
+				"pagePath": "pages/mine/index",
+				"text": "我的"
+			}
+		]
+	},
+	"uniIdRouter": {}
+}
