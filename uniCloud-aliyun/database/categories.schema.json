@@ -1,0 +1,14 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "merchantId": { "bsonType": "string", "title": "所属商家" },
+    "name": { "bsonType": "string", "title": "分类名" },
+    "key": { "bsonType": "string", "title": "英文 key" },
+    "sort": { "bsonType": "int", "title": "排序", "defaultValue": 0 },
+    "icon": { "bsonType": "string", "title": "iconfont", "defaultValue": "" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

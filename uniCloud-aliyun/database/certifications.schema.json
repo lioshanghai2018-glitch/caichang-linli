@@ -1,0 +1,19 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "userId": { "bsonType": "string" },
+    "type": { "bsonType": "string", "title": "认证类型", "description": "community / leader" },
+    "name": { "bsonType": "string" },
+    "phone": { "bsonType": "string" },
+    "communityId": { "bsonType": "string", "defaultValue": "" },
+    "idCardImage": { "bsonType": "string", "defaultValue": "" },
+    "status": { "bsonType": "string", "defaultValue": "pending", "description": "none / pending / certified / rejected" },
+    "rejectReason": { "bsonType": "string", "defaultValue": "" },
+    "reviewedBy": { "bsonType": "string", "defaultValue": "" },
+    "reviewedAt": { "bsonType": "datetime" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

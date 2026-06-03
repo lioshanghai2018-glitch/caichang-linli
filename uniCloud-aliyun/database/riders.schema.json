@@ -1,0 +1,18 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string", "description": "骑手 _id" },
+    "phone": { "bsonType": "string", "title": "手机号", "description": "手机号（唯一）" },
+    "password": { "bsonType": "string", "title": "密码", "description": "密码（加密）" },
+    "name": { "bsonType": "string", "title": "姓名" },
+    "avatar": { "bsonType": "string", "title": "头像", "defaultValue": "" },
+    "merchantId": { "bsonType": "string", "title": "所属商家" },
+    "riderStatus": { "bsonType": "string", "title": "在线状态", "defaultValue": "offline", "description": "offline / idle / delivering" },
+    "rating": { "bsonType": "double", "title": "评分", "defaultValue": 5.0 },
+    "deliveryCount": { "bsonType": "int", "title": "配送次数", "defaultValue": 0 },
+    "pushClientId": { "bsonType": "string", "title": "推送ID", "defaultValue": "" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

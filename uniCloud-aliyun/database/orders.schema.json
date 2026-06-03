@@ -1,0 +1,29 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "orderNo": { "bsonType": "string", "title": "订单号" },
+    "merchantId": { "bsonType": "string", "title": "所属商家" },
+    "userId": { "bsonType": "string", "title": "下单用户" },
+    "riderId": { "bsonType": "string", "title": "骑手ID", "defaultValue": "" },
+    "status": { "bsonType": "string", "title": "订单状态", "defaultValue": "pending_payment", "description": "pending_payment / paid / pending_sorting / sorting / delivering / completed / cancelled / refunding / refunded" },
+    "deliveryStatus": { "bsonType": "string", "title": "配送状态", "defaultValue": "", "description": "accepted / picked_up / delivering / completed" },
+    "items": { "bsonType": "array", "title": "订单商品", "defaultValue": [] },
+    "totalAmount": { "bsonType": "double", "title": "订单总额", "defaultValue": 0 },
+    "payAmount": { "bsonType": "double", "title": "实付金额", "defaultValue": 0 },
+    "deliveryFee": { "bsonType": "double", "title": "配送费", "defaultValue": 0 },
+    "address": { "bsonType": "object", "title": "收货地址", "defaultValue": {} },
+    "remark": { "bsonType": "string", "title": "备注", "defaultValue": "" },
+    "payTime": { "bsonType": "datetime", "title": "支付时间" },
+    "paidAt": { "bsonType": "datetime" },
+    "sortingAt": { "bsonType": "datetime" },
+    "deliveringAt": { "bsonType": "datetime" },
+    "deliveryCompleteTime": { "bsonType": "datetime" },
+    "completedAt": { "bsonType": "datetime" },
+    "cancelledAt": { "bsonType": "datetime" },
+    "version": { "bsonType": "int", "title": "乐观锁", "defaultValue": 1 },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

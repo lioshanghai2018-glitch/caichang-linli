@@ -3,119 +3,120 @@
     {
       "path": "pages/index/index",
       "style": {
-        "navigationBarTitleText": "数据看板"
+        "navigationBarTitleText": "大研菜场商家端",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/orders/index",
+      "path": "pages/order/list",
       "style": {
-        "navigationBarTitleText": "订单管理"
+        "navigationBarTitleText": "订单管理",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/products/index",
+      "path": "pages/product/list",
       "style": {
-        "navigationBarTitleText": "商品管理"
-      }
-    },
-    {
-      "path": "pages/certs/index",
-      "style": {
-        "navigationBarTitleText": "认证管理"
+        "navigationBarTitleText": "商品管理",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
       "path": "pages/mine/index",
       "style": {
-        "navigationBarTitleText": "我的"
+        "navigationBarTitleText": "我的",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/riders/index",
+      "path": "pages/order/detail",
       "style": {
-        "navigationBarTitleText": "骑手管理"
+        "navigationBarTitleText": "订单详情",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/communities/index",
+      "path": "pages/service/chat",
       "style": {
-        "navigationBarTitleText": "小区管理"
+        "navigationBarTitleText": "客服聊天",
+        "navigationBarBackgroundColor": "#FFFFFF",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/categories/index",
+      "path": "pages/service/list",
       "style": {
-        "navigationBarTitleText": "分类管理"
+        "navigationBarTitleText": "客服消息",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/flash-sale/index",
+      "path": "pages/rider/list",
       "style": {
-        "navigationBarTitleText": "特惠管理"
+        "navigationBarTitleText": "骑手管理",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/posts/index",
+      "path": "pages/report/index",
       "style": {
-        "navigationBarTitleText": "帖子管理"
+        "navigationBarTitleText": "数据报表",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/chat/index",
+      "path": "pages/groupbuy/list",
       "style": {
-        "navigationBarTitleText": "客服消息"
+        "navigationBarTitleText": "团购特惠",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     },
     {
-      "path": "pages/chat/conversation",
+      "path": "pages/groupbuy/addProduct",
       "style": {
-        "navigationBarTitleText": "聊天"
+        "navigationBarTitleText": "新增商品",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/product/add",
+      "style": {
+        "navigationBarTitleText": "新增商品",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/category/list",
+      "style": {
+        "navigationBarTitleText": "分类管理",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/category/add",
+      "style": {
+        "navigationBarTitleText": "新增分类",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
       }
     }
   ],
   "globalStyle": {
-    "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "买菜商家",
-    "navigationBarBackgroundColor": "#FFFFFF",
-    "backgroundColor": "#F5F1EB"
-  },
-  "tabBar": {
-    "color": "#999999",
-    "selectedColor": "#4F9A42",
-    "backgroundColor": "#FFFFFF",
-    "borderStyle": "white",
-    "list": [
-      {
-        "pagePath": "pages/index/index",
-        "text": "首页",
-        "iconPath": "static/tabs/home.png",
-        "selectedIconPath": "static/tabs/home-active.png"
-      },
-      {
-        "pagePath": "pages/orders/index",
-        "text": "订单",
-        "iconPath": "static/tabs/order.png",
-        "selectedIconPath": "static/tabs/order-active.png"
-      },
-      {
-        "pagePath": "pages/products/index",
-        "text": "商品",
-        "iconPath": "static/tabs/product.png",
-        "selectedIconPath": "static/tabs/product-active.png"
-      },
-      {
-        "pagePath": "pages/chat/index",
-        "text": "客服",
-        "iconPath": "static/tabs/cert.png",
-        "selectedIconPath": "static/tabs/cert-active.png"
-      },
-      {
-        "pagePath": "pages/mine/index",
-        "text": "我的",
-        "iconPath": "static/tabs/mine.png",
-        "selectedIconPath": "static/tabs/mine-active.png"
-      }
-    ]
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#F5F1EB",
+    "navigationBarTextStyle": "black"
   },
   "uniIdRouter": {}
 }

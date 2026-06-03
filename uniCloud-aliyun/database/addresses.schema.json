@@ -1,0 +1,16 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "userId": { "bsonType": "string" },
+    "name": { "bsonType": "string", "title": "收货人" },
+    "phone": { "bsonType": "string" },
+    "address": { "bsonType": "string" },
+    "doorNo": { "bsonType": "string", "defaultValue": "" },
+    "communityId": { "bsonType": "string", "defaultValue": "" },
+    "isDefault": { "bsonType": "bool", "defaultValue": false },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

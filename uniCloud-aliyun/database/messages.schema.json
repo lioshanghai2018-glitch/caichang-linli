@@ -1,0 +1,15 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "conversationId": { "bsonType": "string" },
+    "merchantId": { "bsonType": "string" },
+    "userId": { "bsonType": "string" },
+    "role": { "bsonType": "string", "title": "发送方", "description": "merchant / user / rider" },
+    "content": { "bsonType": "string" },
+    "contentType": { "bsonType": "string", "defaultValue": "text", "description": "text / image / system" },
+    "resolved": { "bsonType": "bool", "defaultValue": false },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

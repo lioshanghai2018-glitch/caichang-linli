@@ -1,0 +1,16 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "merchantId": { "bsonType": "string", "defaultValue": "" },
+    "userId": { "bsonType": "string", "defaultValue": "" },
+    "riderId": { "bsonType": "string", "defaultValue": "" },
+    "type": { "bsonType": "string", "title": "类型", "description": "new_order / rider_assigned / status_changed / refund / cert / message" },
+    "title": { "bsonType": "string" },
+    "content": { "bsonType": "string" },
+    "data": { "bsonType": "object", "defaultValue": {} },
+    "read": { "bsonType": "bool", "defaultValue": false },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

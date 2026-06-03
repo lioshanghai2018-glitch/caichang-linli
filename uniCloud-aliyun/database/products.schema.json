@@ -1,0 +1,22 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "merchantId": { "bsonType": "string", "title": "所属商家" },
+    "category": { "bsonType": "string", "title": "分类", "defaultValue": "other" },
+    "name": { "bsonType": "string", "title": "商品名" },
+    "spec": { "bsonType": "string", "title": "规格", "defaultValue": "" },
+    "price": { "bsonType": "double", "title": "售价", "defaultValue": 0 },
+    "originalPrice": { "bsonType": "double", "title": "原价", "defaultValue": 0 },
+    "stock": { "bsonType": "int", "title": "库存", "defaultValue": 0 },
+    "sold": { "bsonType": "int", "title": "已售", "defaultValue": 0 },
+    "coverImage": { "bsonType": "string", "title": "封面图", "defaultValue": "" },
+    "images": { "bsonType": "array", "title": "商品图", "defaultValue": [] },
+    "tags": { "bsonType": "array", "title": "标签", "defaultValue": [] },
+    "status": { "bsonType": "string", "title": "状态", "defaultValue": "offline", "description": "online / offline / sold_out" },
+    "description": { "bsonType": "string", "title": "描述", "defaultValue": "" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

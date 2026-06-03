@@ -1,1261 +1,1756 @@
-// 获取 HTTP 请求参数（支持云函数URL化）
-function getHttpParams(event, context) {
-  // 如果有缓存的HTTP数据，直接使用
-  if (global._httpBodyCache) {
-    return global._httpBodyCache
-  }
+// 4 端统一云对象补丁 — 包含鉴权 + uniPush 触发
+// 部署：HBuilderX 右键 uniCloud-aliyun/cloudfunctions/merchant-api → 上传部署
 
-  // 从 context 获取 HTTP 信息
-  if (context && context.httpInfo) {
-    const body = context.httpInfo.body
-    if (body) {
-      try {
-        const parsed = typeof body === 'string' ? JSON.parse(body) : body
-        global._httpBodyCache = parsed
-        return parsed
-      } catch (e) {
-        console.log('parse httpInfo.body error:', e.message)
-      }
+// uni-id-common 是鉴权依赖。优先从 node_modules 加载（项目内已放置），找不到时降级为「明文 + 跳过强校验」
+// uni-push 是可选依赖：未下载时不阻塞云函数冷启动，调用时静默降级
+let uniID = null
+try {
+  uniID = require('uni-id-common')
+} catch (e) {
+  console.warn('[merchant-api] uni-id-common 未找到，将以降级模式运行（明文密码 + 弱鉴权，仅用于联调）')
+}
+let uniPush = null
+try {
+  uniPush = require('uni-push')
+} catch (e) {
+  console.warn('[merchant-api] uni-push 模块未安装，推送功能将不可用。可在 HBuilderX 插件市场搜索「uni-push」下载到 uni_modules 后重试。')
+}
+const db = uniCloud.database()
+const dbCmd = db.command
+
+// 兜底划线价：商家没填 / 填 0 / 填得比售价还低时，自动按 1.5 倍兜底
+// 直接改 doc 本身（包括顶层 price/originalPrice + specs[0]）
+function ensureOriginalPrice(doc) {
+  if (!doc) return
+  const price = Number(doc.price) || 0
+  let originalPrice = Number(doc.originalPrice) || 0
+  if (price > 0 && (!originalPrice || originalPrice < price)) {
+    originalPrice = Number((price * 1.5).toFixed(2))
+  }
+  doc.originalPrice = originalPrice
+  if (Array.isArray(doc.specs) && doc.specs.length > 0) {
+    for (const s of doc.specs) {
+      const sp = Number(s.price) || 0
+      let sop = Number(s.originalPrice) || 0
+      if (sp > 0 && (!sop || sop < sp)) sop = Number((sp * 1.5).toFixed(2))
+      s.originalPrice = sop
+    }
+    // 顶层 price/originalPrice 跟 specs[0] 对齐
+    const first = doc.specs[0]
+    if (first && first.price != null) doc.price = Number(first.price) || 0
+    if (first && first.originalPrice != null) doc.originalPrice = Number(first.originalPrice) || 0
+  }
+}
+
+// 把 items 数组里所有 cloud://xxx 形式的 fileID 批量转成 https 临时 URL
+// 扫描 image / coverImage / images 三个常见字段
+async function resolveFileIdsInItems(items) {
+  if (!Array.isArray(items) || items.length === 0) return
+  const fileIds = new Set()
+  for (const it of items) {
+    if (!it) continue
+    const fields = [it.image, it.coverImage]
+    if (Array.isArray(it.images)) fields.push(...it.images)
+    for (const f of fields) {
+      if (typeof f === 'string' && f.startsWith('cloud://')) fileIds.add(f)
     }
   }
+  if (fileIds.size === 0) return
+  try {
+    const r = await uniCloud.getTempFileURL({ fileList: Array.from(fileIds) })
+    const map = {}
+    for (const item of (r.fileList || [])) {
+      if (item.fileID && item.tempFileURL) map[item.fileID] = item.tempFileURL
+    }
+    for (const it of items) {
+      if (!it) continue
+      if (typeof it.image === 'string' && map[it.image]) it.image = map[it.image]
+      if (typeof it.coverImage === 'string' && map[it.coverImage]) it.coverImage = map[it.coverImage]
+      if (Array.isArray(it.images)) it.images = it.images.map(x => (typeof x === 'string' && map[x]) ? map[x] : x)
+    }
+  } catch (e) {
+    // 转换失败不阻塞主流程，前端会显示占位图
+    console.warn('resolveFileIdsInItems 失败:', e.message)
+  }
+}
 
-  // 从 event 获取（router.js 调用时传入）
-  if (event && event.body) {
-    try {
-      const parsed = typeof event.body === 'string' ? JSON.parse(event.body) : event.body
-      global._httpBodyCache = parsed
-      return parsed
-    } catch (e) {
-      console.log('parse event.body error:', e.message)
+// 明文密码比对降级方案（仅供 seed / 联调使用；正式上线必须装回 uni-id-common）
+async function plainPwdMatch(collection, phone, password) {
+  const r = await db.collection(collection).where({ phone }).get()
+  if (!r.data || !r.data.length) return null
+  const u = r.data[0]
+  return u.password === password ? u : null
+}
+
+// 顶层 helper：避免云对象 this 上下文访问不到 sibling 方法的问题
+async function ensureSeedDoc(collection, doc) {
+  const existing = await db.collection(collection).where({ _id: doc._id }).get()
+  if (existing.data && existing.data.length) {
+    return { ...doc, _action: 'exists' }
+  }
+  await db.collection(collection).add(doc)
+  return { ...doc, _action: 'created' }
+}
+
+// 4 端 URL 化调用统一包成 { method, params } 格式，这里解开拿到真实参数
+function unwrapArgs(args) {
+  if (args && typeof args === 'object' && 'method' in args && 'params' in args && args.params && typeof args.params === 'object') {
+    return args.params
+  }
+  return args
+}
+
+// 看板时间范围：timeFilter=today|week|month|custom，custom 时取 customDate 那一天
+function computeTimeRange(timeFilter, customDate) {
+  const now = new Date()
+  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
+  const endOfDay = (d) => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x }
+  if (timeFilter === 'week') {
+    const day = now.getDay() // 0=Sun..6=Sat
+    const monday = new Date(now)
+    monday.setDate(now.getDate() - ((day + 6) % 7))
+    return { start: startOfDay(monday), end: now, label: '本周' }
+  }
+  if (timeFilter === 'month') {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1)
+    return { start: startOfDay(first), end: now, label: '本月' }
+  }
+  if (timeFilter === 'custom' && customDate) {
+    const d = new Date(customDate)
+    if (!isNaN(d.getTime())) {
+      return { start: startOfDay(d), end: endOfDay(d), label: customDate }
     }
   }
+  return { start: startOfDay(now), end: now, label: '今日' }
+}
 
-  // 直接从 event 获取（uniCloud.database() 调用云函数时）
-  if (event && event.method) {
-    return { method: event.method, params: event.params || {} }
-  }
-
-  // 兜底：从 event 获取 params
-  if (event && event.params) {
-    return { params: event.params }
-  }
-
-  return {}
+// 订单 status 归一化：兼容 canonical 英文值 + 用户端/旧版写入的中文标签
+const ORDER_STATUS_MAP = {
+  '已接单': 'pending_sorting',
+  '待分拣': 'pending_sorting',
+  '已付款': 'paid',
+  '待付款': 'pending_payment',
+  '待支付': 'pending_payment',
+  '分拣中': 'sorting',
+  '待配送': 'sorting',
+  '配送中': 'delivering',
+  '已完成': 'completed',
+  '已取消': 'cancelled',
+  '退款中': 'refunding',
+  '已退款': 'refunded'
+}
+function normalizeOrderStatus(s) {
+  if (!s) return ''
+  return ORDER_STATUS_MAP[s] || s
 }
 
 module.exports = {
-  async _before() {
-    console.log('=== _before ===')
+  _before: async function() {
+    if (uniID) {
+      this.uniID = uniID.createInstance({ context: this })
+    } else {
+      this.uniID = {
+        login: async () => ({ errCode: 'NO_UNI_ID', errMsg: 'uni-id-common 未安装' }),
+        loginByUniverify: async () => ({ errCode: 'NO_UNI_ID', errMsg: 'uni-id-common 未安装' }),
+        sendSmsCode: async () => ({ errCode: 'NO_UNI_ID', errMsg: 'uni-id-common 未安装' }),
+        loginBySms: async () => ({ errCode: 'NO_UNI_ID', errMsg: 'uni-id-common 未安装' }),
+        encryptPwd: async (p) => p
+      }
+    }
+    // URL 化调用的真实数据在 this.getHttpInfo().body（JSON 字符串），不是 this.event 也不是方法签名 data
+    // 把 body 解析后挂到 this.event 上，让所有方法能从 this.event 拿到真实入参
     try {
       const httpInfo = this.getHttpInfo()
-      console.log('httpInfo body:', httpInfo?.body)
-
-      // 解析 body 并缓存到 global
       if (httpInfo && httpInfo.body) {
-        try {
-          global._httpBodyCache = typeof httpInfo.body === 'string'
-            ? JSON.parse(httpInfo.body)
-            : httpInfo.body
-          console.log('cached httpBody:', JSON.stringify(global._httpBodyCache))
-        } catch (e) {
-          console.log('parse httpInfo.body error:', e.message)
+        const bodyObj = JSON.parse(httpInfo.body)
+        // 4 端都把参数包成 {method, params}；有些端可能直接传 params
+        if (bodyObj && bodyObj.method && bodyObj.params && typeof bodyObj.params === 'object') {
+          this.event = bodyObj.params
+        } else {
+          this.event = bodyObj
         }
       }
     } catch (e) {
-      console.log('getHttpInfo error:', e.message)
+      console.warn('[merchant-api] URL 化 body 解析失败:', e.message)
     }
-  },
-  async getCategories() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getCategories params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const res = await db.collection('categories').orderBy('sort','asc').get()
-    return { code: 0, data: res.data }
-  },
-  async addCategory() {
-    console.log('addCategory called')
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('addCategory params:', JSON.stringify(params))
-    console.log('addCategory name:', params?.name)
-    const db = uniCloud.database()
-    const addData = {
-      name: params?.name || 'NO_NAME',
-      sort: params?.sort || 0,
-      status: params?.status !== undefined ? params.status : true,
-      createTime: Date.now()
-    }
-    console.log('addCategory addData:', JSON.stringify(addData))
-    const res = await db.collection('categories').add(addData)
-    return { code: 0, data: res }
-  },
-  async updateCategory() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const { id, ...data } = params
-    const db = uniCloud.database()
-    await db.collection('categories').doc(id).update(data)
-    return { code: 0 }
-  },
-  async deleteCategory() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
-    await db.collection('categories').doc(params.id).remove()
-    return { code: 0 }
   },
 
-  // ========== 商品管理 ==========
+  // ==================== 鉴权端点 ====================
 
-  async getProducts() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getProducts params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    let collection = db.collection('products')
-
-    // 按分类ID筛选
-    if (params.categoryId) {
-      collection = collection.where({ categoryId: params.categoryId })
-    }
-    // 按分类名称筛选
-    if (params.categoryName) {
-      collection = collection.where({ categoryName: params.categoryName })
-    }
-    // 按上下架状态筛选
-    if (params.status !== undefined) {
-      collection = collection.where({ status: params.status })
-    }
-    // 只查询限时特惠商品
-    if (params.flashSaleOnly === true) {
-      const now = Date.now()
-      collection = collection.where({
-        isFlashSale: true,
-        status: true,
-        flashSaleEndTime: db.command.gt(now)
+  async merchantLogin(phone, password) {
+    // 优先走 uni-id 登录；未安装时降级为明文密码比对（仅供联调）
+    if (uniID) {
+      const res = await this.uniID.login({
+        username: phone,
+        password,
+        queryField: ['username', 'phone', 'email']
       })
+      if (res.errCode) return { code: -1, msg: res.errMsg || '登录失败' }
+
+      const merchant = await db.collection('merchants').where({ _id: res.uid }).get()
+      if (!merchant.data || !merchant.data.length) {
+        return { code: -1, msg: '商家账号不存在' }
+      }
+
+      return {
+        code: 0,
+        data: {
+          merchantId: res.uid,
+          token: res.token,
+          tokenExpired: res.tokenExpired,
+          shopInfo: merchant.data[0]
+        }
+      }
     }
-
-    const res = await collection.orderBy('categoryId', 'asc').orderBy('sort', 'asc').get()
-    return { code: 0, data: res.data }
-  },
-
-  async addProduct() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('addProduct params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const addData = {
-      name: params.name || '',
-      categoryId: params.categoryId || '',
-      categoryName: params.categoryName || '',
-      description: params.description || '',
-      specs: params.specs || [],
-      images: params.images || [],
-      status: params.status !== undefined ? params.status : true,
-      sort: params.sort || 0,
-      createTime: Date.now(),
-      // 特惠相关字段
-      isFlashSale: params.isFlashSale || false,
-      originalPrice: params.originalPrice || 0,
-      flashSalePrice: params.flashSalePrice || 0,
-      flashSaleEndTime: params.flashSaleEndTime || null
-    }
-    console.log('addProduct addData:', JSON.stringify(addData))
-
-    const res = await db.collection('products').add(addData)
-    return { code: 0, data: res }
-  },
-
-  async updateProduct() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('updateProduct params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { id, ...data } = params
-    await db.collection('products').doc(id).update(data)
-    return { code: 0 }
-  },
-
-  async deleteProduct() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('deleteProduct params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    await db.collection('products').doc(params.id).remove()
-    return { code: 0 }
-  },
-
-  // ========== 图片上传 ==========
-
-  async uploadImage() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('uploadImage 已废弃，请使用前端直接上传')
-    return { code: 0, data: { url: params.url || '' } }
-  },
-
-  // ========== 特惠管理 ==========
-
-  async getFlashSale() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getFlashSale params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const now = Date.now()
-
-    // 获取当前进行中的特惠活动（启用状态且未过期）
-    let query = db.collection('flash_sales').where({
-      status: true,
-      endTime: db.command.gt(now)
-    }).orderBy('createTime', 'desc').limit(1)
-
-    const res = await query.get()
-    return { code: 0, data: res.data[0] || null }
-  },
-
-  async saveFlashSale() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('saveFlashSale params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const data = {
-      name: params.name || '限时特惠',
-      startTime: params.startTime || Date.now(),
-      endTime: params.endTime || (Date.now() + 86400000 * 7),
-      status: params.status !== undefined ? params.status : true,
-      updateTime: Date.now()
-    }
-
-    if (params.id) {
-      // 更新
-      await db.collection('flash_sales').doc(params.id).update(data)
-      return { code: 0, data: { id: params.id } }
-    } else {
-      // 新增
-      data.createTime = Date.now()
-      const res = await db.collection('flash_sales').add(data)
-      return { code: 0, data: { id: res.id } }
+    // 降级路径
+    const merchant = await plainPwdMatch('merchants', phone, password)
+    if (!merchant) return { code: -1, msg: '账号或密码错误' }
+    return {
+      code: 0,
+      data: {
+        merchantId: merchant._id,
+        token: 'plain_' + merchant._id,
+        tokenExpired: Date.now() + 7200000,
+        shopInfo: merchant
+      }
     }
   },
 
-  async getFlashSaleProducts() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getFlashSaleProducts params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    let query = db.collection('flash_sale_products')
-    if (params.flashSaleId) {
-      query = query.where({ flashSaleId: params.flashSaleId })
+  // 测试/开发模式：自动取唯一商家 ID（仅当 merchants 集合只有 1 条时返回）
+  async merchantAutoLogin() {
+    const r = await db.collection('merchants').limit(2).get()
+    if (!r.data || !r.data.length) {
+      return { code: -1, msg: 'merchants 集合为空' }
     }
-    if (params.active === true) {
-      // 获取当前进行中的特惠商品
-      const saleRes = await db.collection('flash_sales').where({
-        status: true,
-        endTime: db.command.gt(Date.now())
-      }).orderBy('createTime', 'desc').limit(1).get()
+    if (r.data.length > 1) {
+      return { code: -1, msg: '存在多个商家，请走正式登录' }
+    }
+    const m = r.data[0]
+    return {
+      code: 0,
+      data: {
+        merchantId: m._id,
+        token: 'auto_' + m._id,
+        tokenExpired: Date.now() + 7200000,
+        shopInfo: m
+      }
+    }
+  },
 
-      if (saleRes.data && saleRes.data.length > 0) {
-        query = query.where({ flashSaleId: saleRes.data[0]._id })
+  async loginByUniverify(authResult) {
+    const res = await this.uniID.loginByUniverify({ ...authResult })
+    if (res.errCode) return { code: -1, msg: res.errMsg }
+    return { code: 0, data: { token: res.token, userInfo: res.userInfo } }
+  },
+
+  async sendSmsCode(phone) {
+    const res = await this.uniID.sendSmsCode({ phone, type: 'login' })
+    if (res.errCode) return { code: -1, msg: res.errMsg }
+    return { code: 0, data: { phone } }
+  },
+
+  async loginBySms(phone, code) {
+    const res = await this.uniID.loginBySms({ phone, code })
+    if (res.errCode) return { code: -1, msg: res.errMsg }
+    return { code: 0, data: { token: res.token, userInfo: res.userInfo } }
+  },
+
+  async registerPushClientId(clientId, role, roleId) {
+    if (!clientId || !role || !roleId) {
+      return { code: -1, msg: '参数不完整' }
+    }
+    const collection = role === 'rider' ? 'riders' : (role === 'merchant' ? 'merchants' : 'users')
+    await db.collection(collection).doc(roleId).update({
+      pushClientId: clientId,
+      updatedAt: new Date()
+    })
+    return { code: 0, data: { clientId } }
+  },
+
+  // ==================== 业务方法（带推送触发） ====================
+
+  async assignOrder(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    // 兼容 {orderNo, riderId} 对象 和 (orderNo, riderId) 位置参数
+    const orderNo = (params && params.orderNo) || arguments[0]
+    const riderId = (params && params.riderId) || arguments[1]
+    if (!orderNo || !riderId) return { code: -1, msg: 'orderNo 和 riderId 必填' }
+
+    const result = await db.collection('orders').where({ orderNo }).update({
+      riderId,
+      status: 'sorting',
+      updatedAt: new Date()
+    })
+    if (result.updated > 0) {
+      const order = await db.collection('orders').where({ orderNo }).get()
+      const o = order.data[0]
+      if (o) {
+        // 内联推送骑手（云对象 this 拿不到兄弟方法）
+        try {
+          const rr = await db.collection('riders').doc(riderId).field({ pushClientId: true }).get()
+          const clientId = rr.data && rr.data[0] && rr.data[0].pushClientId
+          if (clientId && uniPush) {
+            await uniPush.sendMessage({
+              push_clientid: clientId,
+              title: '新订单待取货',
+              content: `订单 ${orderNo} 等待您取货`,
+              payload: JSON.stringify({ page: '/pages/pending/index', orderNo })
+            })
+          }
+        } catch (pushErr) {
+          console.warn('[assignOrder] 推送骑手失败：', pushErr.message)
+        }
+      }
+    }
+    return { code: 0, data: { success: result.updated > 0 } }
+  },
+
+  async updateOrderStatus(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    // 兼容 {orderNo/id, status, ...extraData} 对象 和 位置参数
+    const p = params || {}
+    const orderNo = p.orderNo || arguments[0]
+    const id = p.id || p._id
+    const status = p.status || arguments[1]
+    const extraData = p.extraData || {}
+    if (!orderNo && !id) return { code: -1, msg: 'orderNo 或 id 必填' }
+    if (!status) return { code: -1, msg: 'status 必填' }
+
+    const where = orderNo ? { orderNo } : { _id: id }
+    const updateData = { status, updatedAt: new Date(), ...extraData }
+    const result = await db.collection('orders').where(where).update(updateData)
+
+    if (result.updated > 0) {
+      const order = await db.collection('orders').where({ orderNo }).get()
+      const o = order.data[0]
+      if (o && o.userId) {
+        const statusText = {
+          sorting: '商家正在分拣',
+          delivering: '骑手已取货，配送中',
+          completed: '订单已完成',
+          cancelled: '订单已取消',
+          refunding: '退款处理中',
+          refunded: '退款已到账'
+        }[status] || `订单状态更新：${status}`
+        // 内联推送用户（云对象 this 拿不到兄弟方法）
+        try {
+          const ur = await db.collection('users').doc(o.userId).field({ pushClientId: true }).get()
+          const clientId = ur.data && ur.data[0] && ur.data[0].pushClientId
+          if (clientId && uniPush) {
+            await uniPush.sendMessage({
+              push_clientid: clientId,
+              title: '订单状态更新',
+              content: `${orderNo} ${statusText}`,
+              payload: JSON.stringify({ page: '/pages/order/index', orderNo })
+            })
+          }
+        } catch (pushErr) {
+          console.warn('[updateOrderStatus] 推送用户失败：', pushErr.message)
+        }
+      }
+    }
+    return { code: 0, data: { success: result.updated > 0 } }
+  },
+
+  async createOrder(orderData) {
+    // 完整诊断：把每一步的快照都返回
+    const _rawOrderData = orderData
+    const _rawOrderDataKeys = orderData && typeof orderData === 'object' ? Object.keys(orderData) : null
+    const _rawOrderDataSerialized = orderData ? JSON.stringify(orderData).slice(0, 600) : 'NULL'
+    const _rawThisEvent = this.event
+    const _rawThisEventKeys = this.event && typeof this.event === 'object' ? Object.keys(this.event) : null
+    const _rawThisEventSerialized = this.event ? JSON.stringify(this.event).slice(0, 600) : 'NO_EVENT'
+
+    // 显式分步：先看 this.event，再决定 unwrap
+    const _evt = this.event
+    const _evtHasParams = !!(this.event && this.event.params)
+    const _step1 = (this.event && this.event.params) || this.event || {}
+    const _step1Keys = Object.keys(_step1)
+    // 关键：空对象是 truthy，要用 Object.keys().length 判断是否真的非空
+    const orderData_unwrapped = (orderData && orderData.params)
+      || (orderData && Object.keys(orderData).length ? orderData : null)
+      || _step1
+    var orderData = orderData_unwrapped
+    const items = orderData.items || orderData.products || []
+    const doc = Object.assign({}, orderData, {
+      items,
+      status: orderData.status || 'pending_payment',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    })
+    delete doc.products
+    const result = await db.collection('orders').add(doc)
+    const verify = await db.collection('orders').doc(result.id).get()
+    const stored = verify.data && verify.data[0]
+    if (result.id && orderData.merchantId) {
+      // 内联推送：云对象运行时 this 拿不到兄弟方法，直接查 merchants 表
+      try {
+        const mr = await db.collection('merchants').doc(orderData.merchantId).field({ pushClientId: true }).get()
+        const clientId = mr.data && mr.data[0] && mr.data[0].pushClientId
+        if (clientId && uniPush) {
+          await uniPush.sendMessage({
+            push_clientid: clientId,
+            title: '新订单',
+            content: `订单 ${orderData.orderNo} 待处理`,
+            payload: JSON.stringify({ page: '/pages/order/list', orderNo: orderData.orderNo })
+          })
+        }
+      } catch (pushErr) {
+        console.warn('[createOrder] 推送商家失败：', pushErr.message)
+      }
+    }
+    return {
+      code: 0,
+      data: {
+        orderId: result.id,
+        storedKeys: stored ? Object.keys(stored) : [],
+        stored,
+        diag: {
+          rawOrderDataKeys: _rawOrderDataKeys,
+          rawOrderDataSerialized: _rawOrderDataSerialized,
+          rawThisEventKeys: _rawThisEventKeys,
+          rawThisEventSerialized: _rawThisEventSerialized,
+          step1Keys: _step1Keys,
+          unwrappedKeys: Object.keys(orderData),
+          itemsLen: items.length
+        }
+      }
+    }
+  },
+
+  async riderUpdateStatus(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    // 兼容 {orderId/id, deliveryStatus} 对象 和 (orderId, deliveryStatus) 位置参数
+    const p = params || {}
+    const orderId = p.orderId || p.id || p._id || arguments[0]
+    const deliveryStatus = p.deliveryStatus || arguments[1]
+    if (!orderId || !deliveryStatus) return { code: -1, msg: 'orderId 和 deliveryStatus 必填' }
+
+    const result = await db.collection('orders').doc(orderId).update({
+      deliveryStatus,
+      // 联动主订单 status，让商家APP/用户端的状态显示同步推进
+      ...(deliveryStatus === 'completed' && { status: 'completed', completedAt: new Date() }),
+      ...(deliveryStatus === 'delivering' && { status: 'delivering' }),
+      updatedAt: new Date()
+    })
+    if (result.updated > 0) {
+      const order = await db.collection('orders').doc(orderId).get()
+      const o = order.data[0]
+      if (o) {
+        const statusText = {
+          accepted: '骑手已接单',
+          picked_up: '骑手已取货',
+          delivering: '配送中',
+          completed: '已送达'
+        }[deliveryStatus] || deliveryStatus
+        // 内联推送用户（云对象 this 拿不到兄弟方法）
+        if (o.userId) {
+          try {
+            const ur = await db.collection('users').doc(o.userId).field({ pushClientId: true }).get()
+            const clientId = ur.data && ur.data[0] && ur.data[0].pushClientId
+            if (clientId && uniPush) {
+              await uniPush.sendMessage({
+                push_clientid: clientId,
+                title: '配送状态',
+                content: `订单 ${o.orderNo} ${statusText}`,
+                payload: JSON.stringify({ page: '/pages/order/index', orderNo: o.orderNo })
+              })
+            }
+          } catch (pushErr) {
+            console.warn('[riderUpdateStatus] 推送用户失败：', pushErr.message)
+          }
+        }
+      }
+    }
+    return { code: 0, data: { success: result.updated > 0 } }
+  },
+
+  // ==================== 商品管理 ====================
+
+  async getProducts(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    // merchantId 容错：传入的值在 merchants 集合里查不到时（uni-id 登录返回的 uid / 用户填错），fallback 到唯一商家
+    let merchantId = params.merchantId
+    if (merchantId) {
+      const m = await db.collection('merchants').doc(merchantId).get()
+      if (!m.data || !m.data.length) {
+        // 商家不存在 → 查 merchants 集合
+        const all = await db.collection('merchants').limit(2).get()
+        if (all.data && all.data.length === 1) {
+          merchantId = all.data[0]._id
+        } else {
+          merchantId = null
+        }
+      }
+    }
+    if (merchantId) where.merchantId = merchantId
+    // 分类过滤：'all'/空 → 不过滤；只按 categoryName（中文）匹配，最一致
+    const cat = (params.category || '').trim()
+    if (cat && cat !== 'all' && params.categoryName) {
+      where.categoryName = params.categoryName
+    }
+    // status 兼容：true / 'true' / 'online' / 1 都视为上架；false / 'offline' 视为下架
+    if (params.status !== undefined && params.status !== '' && params.status !== null) {
+      const s = String(params.status).toLowerCase()
+      const isOn = s === 'true' || s === 'online' || s === '1' || params.status === true || params.status === 1
+      const isOff = s === 'false' || s === 'offline' || s === '0' || params.status === false || params.status === 0
+      if (isOn) {
+        where.status = dbCmd.or([{ status: true }, { status: 'online' }, { status: 1 }])
+      } else if (isOff) {
+        where.status = dbCmd.or([{ status: false }, { status: 'offline' }, { status: 0 }])
       } else {
-        return { code: 0, data: [] }
+        where.status = params.status
+      }
+    }
+    const r = await db.collection('products').where(where).limit(params.limit || 100).orderBy('createdAt', 'desc').get()
+    const list = r.data || []
+    await resolveFileIdsInItems(list)
+    return { code: 0, data: list }
+  },
+
+  async addProduct(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const doc = { ...data, sold: 0, images: data.images || [], description: data.description || '', createdAt: new Date(), updatedAt: new Date() }
+    // 兜底：如果商家没填 specs，从顶层 price/stock/originalPrice 生成一个默认规格
+    // （用户端、WEB 端商品列表都按 specs[0] 读，没有 specs 就显示 ¥0）
+    if (!doc.specs || !Array.isArray(doc.specs) || doc.specs.length === 0) {
+      doc.specs = [{
+        name: doc.spec || '默认',
+        price: Number(doc.price) || 0,
+        originalPrice: Number(doc.originalPrice) || 0,
+        stock: Number(doc.stock) || 0
+      }]
+    }
+    // 划线价兜底：缺 / 0 / 比售价低 → 自动 1.5x
+    ensureOriginalPrice(doc)
+    if (!doc._id) doc._id = 'p_' + Date.now()
+    await db.collection('products').add(doc)
+    return { code: 0, data: { _id: doc._id } }
+  },
+
+  async updateProduct(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, ...update } = params
+    update.updatedAt = new Date()
+    // 划线价兜底：如果本次更新带 price / specs，同步补 originalPrice
+    if (update.price != null || Array.isArray(update.specs)) {
+      const synthetic = {
+        price: update.price,
+        originalPrice: update.originalPrice,
+        specs: update.specs
+      }
+      ensureOriginalPrice(synthetic)
+      if (synthetic.originalPrice != null) update.originalPrice = synthetic.originalPrice
+      if (Array.isArray(synthetic.specs)) update.specs = synthetic.specs
+    }
+    await db.collection('products').doc(id).update(update)
+    return { code: 0, data: { success: true } }
+  },
+
+  // 编辑商品回显用
+  async getProductDetail(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const id = params.id || params._id
+    if (!id) return { code: -1, msg: 'id 必填' }
+    const r = await db.collection('products').doc(id).get()
+    const item = (r.data && r.data[0]) || null
+    if (item) await resolveFileIdsInItems([item])
+    return { code: 0, data: item }
+  },
+
+  // 一次性数据修复：给历史商品补 categoryName / category（用 categories 集合反查 name 和 key）
+  async fixProductsCategoryName() {
+    const cats = await db.collection('categories').limit(500).get()
+    const list = cats.data || []
+    // 三张映射表：id → name，id → key
+    const idToName = {}
+    const idToKey = {}
+    const nameToKey = {}
+    for (const c of list) {
+      if (c._id) {
+        if (c.name) idToName[c._id] = c.name
+        if (c.key) idToKey[c._id] = c.key
+      }
+      if (c.name && c.key) nameToKey[c.name] = c.key
+    }
+    const all = await db.collection('products').limit(1000).get()
+    const products = all.data || []
+    let fixedName = 0
+    let fixedKey = 0
+    for (const p of products) {
+      const upd = {}
+      if (!p.categoryName) {
+        if (idToName[p.category]) upd.categoryName = idToName[p.category]
+        else if (idToName[p.categoryId]) upd.categoryName = idToName[p.categoryId]
+      }
+      if (!p.category) {
+        if (idToKey[p.category]) upd.category = idToKey[p.category]
+        else if (idToKey[p.categoryId]) upd.category = idToKey[p.categoryId]
+        else if (p.categoryName && nameToKey[p.categoryName]) upd.category = nameToKey[p.categoryName]
+      }
+      if (Object.keys(upd).length) {
+        upd.updatedAt = new Date()
+        await db.collection('products').doc(p._id).update(upd)
+        if (upd.categoryName) fixedName++
+        if (upd.category) fixedKey++
+      }
+    }
+    return { code: 0, data: { total: products.length, fixedName, fixedKey } }
+  },
+
+  // 一次性数据修复：跑完 merchantId + categoryName + createdAt 修复（不走 this，避免兄弟方法拿不到）
+  async fixAllProducts(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+
+    // 1) 修 merchantId + createdAt
+    let merchantId = params.merchantId
+    if (!merchantId) {
+      const m = await db.collection('merchants').limit(2).get()
+      if (!m.data || !m.data.length) return { code: -1, msg: 'merchants 集合为空' }
+      if (m.data.length > 1) return { code: -1, msg: '存在多个商家，请显式传 merchantId' }
+      merchantId = m.data[0]._id
+    }
+    const all = await db.collection('products').limit(1000).get()
+    const products = all.data || []
+    let fixedMerchant = 0
+    let fixedCreatedAt = 0
+    for (const p of products) {
+      const upd = {}
+      if (!p.merchantId) {
+        upd.merchantId = merchantId
+        fixedMerchant++
+      }
+      if (!p.createdAt) {
+        if (p.createTime) {
+          upd.createdAt = new Date(Number(p.createTime))
+        } else {
+          upd.createdAt = new Date()
+        }
+        fixedCreatedAt++
+      }
+      if (Object.keys(upd).length) {
+        upd.updatedAt = new Date()
+        await db.collection('products').doc(p._id).update(upd)
       }
     }
 
-    const res = await query.orderBy('sort', 'asc').get()
-    return { code: 0, data: res.data }
-  },
-
-  async addFlashSaleProduct() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('addFlashSaleProduct params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const addData = {
-      flashSaleId: params.flashSaleId || '',
-      name: params.name || '',
-      image: params.image || '',
-      originalPrice: params.originalPrice || 0,
-      flashPrice: params.flashPrice || 0,
-      stock: params.stock || 0,
-      specs: params.specs || [],
-      sort: params.sort || 0,
-      createTime: Date.now()
+    // 2) 修 categoryName + category
+    const cats = await db.collection('categories').limit(500).get()
+    const catList = cats.data || []
+    const idToName = {}
+    const idToKey = {}
+    const nameToKey = {}
+    for (const c of catList) {
+      if (c._id) {
+        if (c.name) idToName[c._id] = c.name
+        if (c.key) idToKey[c._id] = c.key
+      }
+      if (c.name && c.key) nameToKey[c.name] = c.key
     }
-
-    const res = await db.collection('flash_sale_products').add(addData)
-    return { code: 0, data: res }
-  },
-
-  async updateFlashSaleProduct() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('updateFlashSaleProduct params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { id, ...data } = params
-    await db.collection('flash_sale_products').doc(id).update(data)
-    return { code: 0 }
-  },
-
-  async deleteFlashSaleProduct() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('deleteFlashSaleProduct params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    await db.collection('flash_sale_products').doc(params.id).remove()
-    return { code: 0 }
-  },
-
-  // ========== 数据修复 ==========
-
-  async fixProductCategories() {
-    const httpData = getHttpParams({}, this)
-    console.log('fixProductCategories 开始修正分类数据')
-    const db = uniCloud.database()
-
-    // 1. 获取所有分类，建立 ID -> 名称 映射
-    const catRes = await db.collection('categories').get()
-    const catMap = {}
-    catRes.data.forEach(c => { catMap[String(c._id)] = c.name })
-
-    // 2. 获取所有商品
-    const prodRes = await db.collection('products').get()
-    let fixed = 0
-
-    for (const product of prodRes.data) {
-      const correctName = catMap[String(product.categoryId)] || ''
-      if (correctName && product.categoryName !== correctName) {
-        console.log(`修正商品: ${product.name}, categoryName: ${product.categoryName} -> ${correctName}`)
-        await db.collection('products').doc(product._id).update({ categoryName: correctName })
-        fixed++
+    let fixedName = 0
+    let fixedKey = 0
+    for (const p of products) {
+      const upd = {}
+      if (!p.categoryName) {
+        if (idToName[p.category]) upd.categoryName = idToName[p.category]
+        else if (idToName[p.categoryId]) upd.categoryName = idToName[p.categoryId]
+      }
+      if (!p.category) {
+        if (idToKey[p.category]) upd.category = idToKey[p.category]
+        else if (idToKey[p.categoryId]) upd.category = idToKey[p.categoryId]
+        else if (p.categoryName && nameToKey[p.categoryName]) upd.category = nameToKey[p.categoryName]
+      }
+      if (Object.keys(upd).length) {
+        upd.updatedAt = new Date()
+        await db.collection('products').doc(p._id).update(upd)
+        if (upd.categoryName) fixedName++
+        if (upd.category) fixedKey++
       }
     }
-
-    console.log(`修正完成，共修正 ${fixed} 条商品分类`)
-    return { code: 0, msg: `修正完成，共修正 ${fixed} 条商品分类` }
-  },
-
-  // ========== 诊断 ==========
-
-  async diagnoseCategories() {
-    const db = uniCloud.database()
-
-    // 获取所有分类
-    const catRes = await db.collection('categories').orderBy('sort', 'asc').get()
-
-    // 获取所有商品
-    const prodRes = await db.collection('products').orderBy('categoryId', 'asc').get()
-
-    // 构建分类ID->名称映射
-    const catMap = {}
-    catRes.data.forEach(c => { catMap[String(c._id)] = c.name })
-
-    // 构建商品诊断数据
-    const productDiag = prodRes.data.map(p => ({
-      name: p.name,
-      categoryId: String(p.categoryId || ''),
-      categoryIdInMap: catMap[String(p.categoryId)] || '(无匹配)',
-      categoryName: p.categoryName || '',
-      isMatch: catMap[String(p.categoryId)] === p.categoryName ? '✓' : '✗ 不一致'
-    }))
 
     return {
       code: 0,
       data: {
-        categories: catRes.data.map(c => ({ _id: String(c._id), name: c.name, sort: c.sort })),
-        products: productDiag
+        merchantId,
+        total: products.length,
+        fixedMerchant,
+        fixedCreatedAt,
+        fixedName,
+        fixedKey
       }
     }
   },
 
-  // ========== 订单管理 ==========
-
-  async getOrders(initialParams) {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getOrders params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    let query = db.collection('orders')
-
-    // 按状态筛选
-    if (params.status) {
-      query = query.where({ status: params.status })
+  // 一次性数据修复：给历史商品补 merchantId（WEB 端早期添加的没带这个字段）
+  // 同时把 createTime 转为 createdAt（统一排序字段）
+  async fixProductsMerchantId(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    // merchantId 可显式传入；否则取唯一商家
+    let merchantId = params.merchantId
+    if (!merchantId) {
+      const m = await db.collection('merchants').limit(2).get()
+      if (!m.data || !m.data.length) return { code: -1, msg: 'merchants 集合为空' }
+      if (m.data.length > 1) return { code: -1, msg: '存在多个商家，请显式传 merchantId' }
+      merchantId = m.data[0]._id
     }
-    // 按用户ID筛选（用户端只能看自己的订单）
-    if (params.userId) {
-      query = query.where({ userId: params.userId })
+    const all = await db.collection('products').limit(1000).get()
+    const products = all.data || []
+    let fixedMerchant = 0
+    let fixedCreatedAt = 0
+    for (const p of products) {
+      const upd = {}
+      if (!p.merchantId) {
+        upd.merchantId = merchantId
+        fixedMerchant++
+      }
+      if (!p.createdAt) {
+        if (p.createTime) {
+          upd.createdAt = new Date(Number(p.createTime))
+        } else {
+          upd.createdAt = new Date()
+        }
+        fixedCreatedAt++
+      }
+      if (Object.keys(upd).length) {
+        upd.updatedAt = new Date()
+        await db.collection('products').doc(p._id).update(upd)
+      }
     }
-
-    const res = await query.orderBy('createTime', 'desc').get()
-    return { code: 0, data: res.data }
+    return { code: 0, data: { total: products.length, merchantId, fixedMerchant, fixedCreatedAt } }
   },
 
-  async createOrder() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('createOrder params:', JSON.stringify(params))
-    const db = uniCloud.database()
+  async deleteProduct(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    await db.collection('products').doc(id).remove()
+    return { code: 0, data: { success: true } }
+  },
 
-    // 生成订单号：格式 YYMMDDHHmmss + 随机数
-    const now = new Date()
-    const dateStr = now.getFullYear().toString().slice(-2) +
-      String(now.getMonth() + 1).padStart(2, '0') +
-      String(now.getDate()).padStart(2, '0') +
-      String(now.getHours()).padStart(2, '0') +
-      String(now.getMinutes()).padStart(2, '0') +
-      String(now.getSeconds()).padStart(2, '0')
-    const random = String(Math.floor(Math.random() * 100)).padStart(2, '0')
-    const orderNo = params.orderNo || (dateStr + random)
+  // ==================== 分类管理 ====================
 
-    const orderData = {
-      orderNo,
-      userId: params.userId || '',
-      userPhone: params.userPhone || '',
-      products: params.products || [],
-      totalAmount: params.totalAmount || 0,
-      status: params.status || 'pending',
-      remark: params.remark || '',
-      address: params.address || {},
-      deliveryTime: params.deliveryTime || '',
-      deliveryType: params.deliveryType || 'self',
-      timeType: params.timeType || 'today',
-      payMethod: params.payMethod || '微信支付',
-      packFee: params.packFee || '¥0',
-      deliveryFee: params.deliveryFee || '¥0',
-      coupon: params.coupon || '¥0',
-      orderTime: params.orderTime || '',
-      refundAmount: 0,
-      refundReason: '',
-      createTime: Date.now(),
-      updateTime: Date.now()
-    }
-
-    // 如果是配送订单且已接单，自动分配骑手
-    if (params.deliveryType !== 'self' && (params.status === '已接单' || params.status === 'confirmed')) {
-      console.log('【自动分配骑手】配送订单已接单，开始查询在线骑手')
-      const ridersRes = await db.collection('riders').where({
-        status: 'active',
-        riderStatus: 'online'
-      }).get()
-      const riders = ridersRes.data || []
-      console.log('【自动分配骑手】查询到的骑手数量:', riders.length)
-      console.log('【自动分配骑手】骑手详情:', JSON.stringify(riders))
-
-      if (riders.length > 0) {
-        const rider = riders[0]
-        orderData.riderId = rider._id
-        orderData.riderName = rider.name
-        orderData.riderPhone = rider.phone
-        orderData.assignedTime = Date.now()
-        orderData.deliveryStatus = 'accepted'
-        console.log('【自动分配骑手】新订单已自动分配给骑手:', rider.name)
-      } else {
-        console.log('【自动分配骑手】没有在线骑手，订单待分配')
+  async getCategories(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    // merchantId 容错：传入的值在 merchants 集合里查不到时，fallback 到唯一商家
+    let merchantId = params.merchantId
+    if (merchantId) {
+      const m = await db.collection('merchants').doc(merchantId).get()
+      if (!m.data || !m.data.length) {
+        const all = await db.collection('merchants').limit(2).get()
+        if (all.data && all.data.length === 1) {
+          merchantId = all.data[0]._id
+        } else {
+          merchantId = null
+        }
       }
     } else {
-      console.log('【自动分配骑手】跳过分配 - deliveryType:', params.deliveryType, 'status:', params.status)
-    }
-
-    const res = await db.collection('orders').add(orderData)
-    return { code: 0, data: { id: res.id, orderNo } }
-  },
-
-  async updateOrderStatus() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('updateOrderStatus params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { id, status } = params
-
-    const updateData = {
-      status,
-      updateTime: Date.now()
-    }
-
-    // 商家接单时，自动分配骑手（兼容中文和英文状态名）
-    if (status === 'confirmed' || status === '已接单') {
-      // 获取所有在线骑手
-      const ridersRes = await db.collection('riders').where({
-        status: 'active',
-        riderStatus: 'online'
-      }).get()
-      const riders = ridersRes.data || []
-
-      if (riders.length === 0) {
-        // 没有骑手在线，只更新状态，返回警告
-        await db.collection('orders').doc(id).update(updateData)
-        return { code: 1, msg: '已接单，但当前没有在线骑手，请提醒骑手上线' }
-      }
-
-      // 分配给第一个在线骑手
-      const rider = riders[0]
-      updateData.riderId = rider._id
-      updateData.riderName = rider.name
-      updateData.riderPhone = rider.phone
-      updateData.assignedTime = Date.now()
-      updateData.deliveryStatus = 'accepted'
-
-      await db.collection('orders').doc(id).update(updateData)
-      return { code: 0, msg: `已接单，订单已自动分配给骑手 ${rider.name}` }
-    }
-
-    // 如果是开始配送但没有骑手，记录警告
-    if (status === 'delivering') {
-      const order = await db.collection('orders').doc(id).get()
-      if (!order.data.riderId) {
-        console.warn('订单开始配送但没有分配骑手:', id)
-      } else {
-        updateData.deliveryStartTime = Date.now()
+      // 兜底：未传 merchantId 时取唯一商家
+      const all = await db.collection('merchants').limit(2).get()
+      if (all.data && all.data.length === 1) {
+        merchantId = all.data[0]._id
       }
     }
+    if (merchantId) where.merchantId = merchantId
+    const r = await db.collection('categories').where(where).orderBy('sort', 'asc').get()
+    return { code: 0, data: r.data || [] }
+  },
 
-    if (status === 'completed') {
-      updateData.deliveryCompleteTime = Date.now()
+  async addCategory(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const doc = { ...data, sort: data.sort || 0, createdAt: new Date(), updatedAt: new Date() }
+    if (!doc._id) doc._id = 'c_' + Date.now()
+    await db.collection('categories').add(doc)
+    return { code: 0, data: { _id: doc._id } }
+  },
+
+  async updateCategory(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, ...update } = params
+    update.updatedAt = new Date()
+    await db.collection('categories').doc(id).update(update)
+    return { code: 0, data: { success: true } }
+  },
+
+  async deleteCategory(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    await db.collection('categories').doc(id).remove()
+    return { code: 0, data: { success: true } }
+  },
+
+  // 一次性数据修复：给历史 categories 补 merchantId（WEB 端早期添加的没带这个字段）
+  // 同时把 createTime 转为 createdAt（统一排序字段）
+  async fixCategoriesMerchantId(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    // merchantId 可显式传入；否则取唯一商家
+    let merchantId = params.merchantId
+    if (!merchantId) {
+      const m = await db.collection('merchants').limit(2).get()
+      if (!m.data || !m.data.length) return { code: -1, msg: 'merchants 集合为空' }
+      if (m.data.length > 1) return { code: -1, msg: '存在多个商家，请显式传 merchantId' }
+      merchantId = m.data[0]._id
     }
-
-    await db.collection('orders').doc(id).update(updateData)
-
-    return { code: 0, msg: '订单状态已更新' }
+    const all = await db.collection('categories').limit(1000).get()
+    const cats = all.data || []
+    let fixedMerchant = 0
+    let fixedCreatedAt = 0
+    for (const c of cats) {
+      const upd = {}
+      if (!c.merchantId) {
+        upd.merchantId = merchantId
+        fixedMerchant++
+      }
+      if (!c.createdAt) {
+        if (c.createTime) {
+          upd.createdAt = new Date(Number(c.createTime))
+        } else {
+          upd.createdAt = new Date()
+        }
+        fixedCreatedAt++
+      }
+      if (Object.keys(upd).length) {
+        upd.updatedAt = new Date()
+        await db.collection('categories').doc(c._id).update(upd)
+      }
+    }
+    return { code: 0, data: { total: cats.length, merchantId, fixedMerchant, fixedCreatedAt } }
   },
 
-  async applyRefund() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('applyRefund params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { id, reason } = params
-
-    await db.collection('orders').doc(id).update({
-      status: 'refunding',
-      refundReason: reason || '用户申请退款',
-      updateTime: Date.now()
-    })
-
-    return { code: 0, msg: '退款申请已提交' }
+  // 一次性数据修复：把历史订单的中文 status 转成 canonical 英文值（用与 normalizeOrderStatus 同一张映射表）
+  async fixOrdersStatus() {
+    const all = await db.collection('orders').limit(2000).get()
+    const orders = all.data || []
+    let fixed = 0
+    const breakdown = {}
+    for (const o of orders) {
+      const canonical = ORDER_STATUS_MAP[o.status]
+      if (canonical && canonical !== o.status) {
+        await db.collection('orders').doc(o._id).update({ status: canonical, updatedAt: new Date() })
+        breakdown[o.status] = (breakdown[o.status] || 0) + 1
+        fixed++
+      }
+    }
+    return { code: 0, data: { total: orders.length, fixed, breakdown } }
   },
 
-  async processRefund() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('processRefund params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { id, refundAmount, action } = params  // action: 'approve' | 'reject'
+  // ==================== 订单管理 ====================
 
-    if (action === 'reject') {
-      // 拒绝退款，恢复原状态
-      await db.collection('orders').doc(id).update({
-        status: 'completed',
-        refundReason: '',
-        updateTime: Date.now()
+  async getOrders(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.merchantId) where.merchantId = params.merchantId
+    if (params.userId) where.userId = params.userId
+    if (params.riderId) where.riderId = params.riderId
+    // status=all/全部 时不过滤；其他值才精确匹配
+    if (params.status && params.status !== 'all') where.status = params.status
+    if (params.deliveryStatus) where.deliveryStatus = params.deliveryStatus
+    const pageSize = params.pageSize || 50
+    const page = params.page || 1
+    const keyword = (params.keyword || '').trim()
+
+    // 关键词搜索：orderNo / 收货人手机 / 收货人姓名（address 是嵌套对象，jql 不便 where，走内存过滤）
+    if (keyword) {
+      // 拉大窗口（500）覆盖大部分商家单量，再内存过滤；避免分页把目标过滤掉
+      const big = await db.collection('orders').where(where).limit(500).orderBy('createdAt', 'desc').get()
+      const k = keyword.toLowerCase()
+      const matched = (big.data || []).filter(o => {
+        if (o.orderNo && String(o.orderNo).toLowerCase().includes(k)) return true
+        const addr = o.address || {}
+        if (addr.phone && String(addr.phone).includes(keyword)) return true
+        if (addr.name && String(addr.name).includes(keyword)) return true
+        if (o.customerPhone && String(o.customerPhone).includes(keyword)) return true
+        return false
       })
-      return { code: 0, msg: '退款申请已拒绝' }
+      return { code: 0, data: matched }
     }
 
-    // 同意退款
+    const r = await db.collection('orders').where(where).skip((page - 1) * pageSize).limit(pageSize).orderBy('createdAt', 'desc').get()
+    return { code: 0, data: r.data || [] }
+  },
+
+  async getOrderDetail(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = params.orderNo ? { orderNo: params.orderNo } : { _id: params._id || params.id }
+    const r = await db.collection('orders').where(where).limit(1).get()
+    return { code: 0, data: r.data && r.data[0] ? r.data[0] : null }
+  },
+
+  async applyRefund(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, orderNo, reason } = params
+    // 兼容 _id 和 orderNo 两种入参（jql 的 where _id 要求 ObjectId 类型，传字符串不匹配）
+    const where = orderNo ? { orderNo } : { _id: id }
+    await db.collection('orders').where(where).update({
+      status: 'refunding',
+      refundReason: reason,
+      updatedAt: new Date()
+    })
+    await db.collection('refunds').add({
+      orderId: id || orderNo,
+      orderNo: orderNo,
+      reason,
+      status: 'pending',
+      createdAt: new Date()
+    })
+    return { code: 0, data: { success: true } }
+  },
+
+  async processRefund(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, refundAmount, action } = params
+    const status = action === 'approve' ? 'refunded' : 'paid'
     await db.collection('orders').doc(id).update({
-      status: 'refunded',
-      refundAmount: refundAmount || 0,
-      updateTime: Date.now()
+      status,
+      refundAmount,
+      updatedAt: new Date()
     })
-
-    return { code: 0, msg: '退款处理完成' }
-  },
-
-  async deleteOrder() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('deleteOrder params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    await db.collection('orders').doc(params.id).remove()
-    return { code: 0, msg: '订单已删除' }
-  },
-
-  async getCommunities() {
-    const db = uniCloud.database()
-    const res = await db.collection('communities').orderBy('code', 'asc').get()
-    return { code: 0, data: res.data }
-  },
-
-  async addCommunity() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
-    const res = await db.collection('communities').add({
-      name: params.name || '',
-      code: params.code || '',
-      createTime: Date.now()
+    await db.collection('refunds').where({ orderId: id }).update({
+      status: action === 'approve' ? 'approved' : 'rejected',
+      refundAmount,
+      processedAt: new Date()
     })
-    return { code: 0, data: res }
+    return { code: 0, data: { success: true } }
   },
 
-  async updateCommunity() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const { id, ...data } = params
-    const db = uniCloud.database()
-    await db.collection('communities').doc(id).update(data)
-    return { code: 0 }
+  async deleteOrder(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, orderNo } = params
+    const where = orderNo ? { orderNo } : { _id: id }
+    await db.collection('orders').where(where).remove()
+    return { code: 0, data: { success: true } }
   },
 
-  async deleteCommunity() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
-    await db.collection('communities').doc(params.id).remove()
-    return { code: 0 }
+  // ==================== 小区管理 ====================
+
+  async getCommunities(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.merchantId) where.merchantId = params.merchantId
+    const r = await db.collection('communities').where(where).get()
+    return { code: 0, data: r.data || [] }
   },
 
-  // ========== 骑手管理 ==========
-
-  async getRiders() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getRiders params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    let query = db.collection('riders')
-
-    // 按状态筛选
-    if (params.status) {
-      query = query.where({ status: params.status })
-    }
-
-    const res = await query.orderBy('createTime', 'desc').get()
-    return { code: 0, data: res.data }
+  async addCommunity(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const doc = { ...data, houseCount: data.houseCount || 0, userCount: data.userCount || 0, status: data.status || 'active', createdAt: new Date(), updatedAt: new Date() }
+    if (!doc._id) doc._id = 'cm_' + Date.now()
+    await db.collection('communities').add(doc)
+    return { code: 0, data: { _id: doc._id } }
   },
 
-  async addRider() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('addRider params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    // 检查手机号是否已存在
-    const exist = await db.collection('riders').where({ phone: params.phone }).get()
-    if (exist.data && exist.data.length > 0) {
-      return { code: 1, msg: '该手机号已注册' }
-    }
-
-    const addData = {
-      name: params.name || '',
-      phone: params.phone || '',
-      password: params.password || '123456', // 默认密码
-      status: params.status !== undefined ? params.status : 'active',
-      riderStatus: params.riderStatus || 'offline', // 在线状态：online/offline
-      communityIds: params.communityIds || [], // 配送区域（小区编号数组）
-      createTime: Date.now()
-    }
-
-    const res = await db.collection('riders').add(addData)
-    return { code: 0, data: { id: res.id } }
+  async updateCommunity(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, ...update } = params
+    update.updatedAt = new Date()
+    await db.collection('communities').doc(id).update(update)
+    return { code: 0, data: { success: true } }
   },
 
-  async updateRider() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('updateRider params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { id, ...data } = params
-
-    const updateData = { ...data, updateTime: Date.now() }
-    delete updateData.password // 不允许通过此接口修改密码
-
-    await db.collection('riders').doc(id).update(updateData)
-    return { code: 0, msg: '骑手信息已更新' }
+  async deleteCommunity(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    await db.collection('communities').doc(id).remove()
+    return { code: 0, data: { success: true } }
   },
 
-  async deleteRider() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('deleteRider params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    await db.collection('riders').doc(params.id).remove()
-    return { code: 0, msg: '骑手已删除' }
+  // ==================== 骑手管理 ====================
+
+  async getRiders(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.merchantId) where.merchantId = params.merchantId
+    if (params.riderStatus) where.riderStatus = params.riderStatus
+    const r = await db.collection('riders').where(where).get()
+    return { code: 0, data: r.data || [] }
   },
 
-  // ========== 骑手登录 ==========
-
-  // ========== 骑手登录 ==========
-
-  async riderLogin() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('riderLogin params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const { phone, password } = params
-
-    // 查找骑手
-    const res = await db.collection('riders').where({ phone, status: 'active' }).get()
-    if (!res.data || res.data.length === 0) {
-      return { code: 1, msg: '骑手不存在或已被禁用' }
-    }
-
-    const rider = res.data[0]
-
-    // 简单密码验证（实际生产应加密）
-    if (rider.password !== password && password !== '123456') {
-      return { code: 1, msg: '密码错误' }
-    }
-
-    // 登录成功，更新骑手在线状态
-    await db.collection('riders').doc(rider._id).update({
-      riderStatus: 'online',
-      updateTime: Date.now()
-    })
-    console.log('【骑手登录】骑手已上线:', rider.name)
-
-    // 返回骑手信息（不包含密码）
-    const { password: _, ...riderInfo } = rider
-    riderInfo.riderStatus = 'online'
-    return { code: 0, data: riderInfo }
+  async addRider(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const doc = { ...data, rating: 5.0, deliveryCount: 0, riderStatus: data.riderStatus || 'idle', createdAt: new Date(), updatedAt: new Date() }
+    if (!doc._id) doc._id = 'r_' + Date.now()
+    await db.collection('riders').add(doc)
+    return { code: 0, data: { _id: doc._id } }
   },
 
-  // ========== 骑手修改密码 ==========
-
-  async riderChangePassword() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('riderChangePassword params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const { riderId, oldPassword, newPassword } = params
-
-    // 获取骑手信息
-    const riderRes = await db.collection('riders').doc(riderId).get()
-    if (!riderRes.data) {
-      return { code: 1, msg: '骑手不存在' }
-    }
-    const rider = riderRes.data
-
-    // 验证旧密码
-    if (rider.password !== oldPassword && oldPassword !== '123456') {
-      return { code: 1, msg: '原密码错误' }
-    }
-
-    // 更新密码
-    await db.collection('riders').doc(riderId).update({
-      password: newPassword,
-      updateTime: Date.now()
-    })
-
-    return { code: 0, msg: '密码修改成功' }
+  async updateRider(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, ...update } = params
+    update.updatedAt = new Date()
+    await db.collection('riders').doc(id).update(update)
+    return { code: 0, data: { success: true } }
   },
 
-  // ========== 订单分配 ==========
-
-  async assignOrder() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('assignOrder params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { orderId, riderId } = params
-
-    // 获取骑手信息
-    const riderRes = await db.collection('riders').doc(riderId).get()
-    if (!riderRes.data) {
-      return { code: 1, msg: '骑手不存在' }
-    }
-    const rider = riderRes.data
-
-    // 更新订单
-    await db.collection('orders').doc(orderId).update({
-      riderId: rider._id,
-      riderName: rider.name,
-      riderPhone: rider.phone,
-      assignedTime: Date.now(),
-      deliveryStatus: 'accepted', // 已分配给骑手
-      updateTime: Date.now()
-    })
-
-    return { code: 0, msg: '订单已分配给骑手' }
+  async deleteRider(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    await db.collection('riders').doc(id).remove()
+    return { code: 0, data: { success: true } }
   },
 
   async autoAssignOrders() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('autoAssignOrders called')
-    const db = uniCloud.database()
-
-    // 1. 获取所有在线骑手（在职且在线）
-    const ridersRes = await db.collection('riders').where({
-      status: 'active',
-      riderStatus: 'online'
-    }).get()
-    const riders = ridersRes.data || []
-
-    // 2. 获取所有待分配订单（confirmed状态、且是配送订单）
-    const ordersRes = await db.collection('orders').where({
-      status: 'confirmed',
-      deliveryType: 'delivery'
-    }).get()
-    const orders = ordersRes.data || []
-
-    console.log('可用骑手:', riders.length, '待分配订单:', orders.length)
-
-    if (riders.length === 0) {
-      return { code: 0, msg: '没有在线骑手，无法自动分配' }
+    const idleRiders = await db.collection('riders').where({ riderStatus: 'idle' }).limit(1).get()
+    if (!idleRiders.data || !idleRiders.data.length) return { code: 0, data: { assigned: 0 } }
+    const riderId = idleRiders.data[0]._id
+    const pendingOrders = await db.collection('orders').where({ status: 'paid', riderId: dbCmd.exists(false) }).limit(10).get()
+    let count = 0
+    for (const o of pendingOrders.data || []) {
+      await db.collection('orders').doc(o._id).update({ riderId, status: 'sorting', updatedAt: new Date() })
+      count++
     }
-
-    let assignedCount = 0
-
-    for (const order of orders) {
-      // 跳过已有骑手的订单
-      if (order.riderId) continue
-
-      // 从订单地址中提取小区信息
-      const addressText = order.address?.address || ''
-
-      // 匹配骑手（查找配送区域包含订单地址的骑手）
-      let matchedRider = null
-
-      // 如果没有匹配到骑手，使用第一个在线骑手（轮询分配）
-      if (!matchedRider && riders.length > 0) {
-        // 简单策略：按顺序分配给在线骑手
-        matchedRider = riders[assignedCount % riders.length]
-      }
-
-      // 分配订单
-      if (matchedRider) {
-        await db.collection('orders').doc(order._id).update({
-          riderId: matchedRider._id,
-          riderName: matchedRider.name,
-          riderPhone: matchedRider.phone,
-          assignedTime: Date.now(),
-          deliveryStatus: 'accepted',
-          updateTime: Date.now()
-        })
-        assignedCount++
-        console.log(`订单 ${order._id} 已分配给骑手 ${matchedRider.name}`)
-      }
-    }
-
-    return { code: 0, msg: `已自动分配 ${assignedCount} 个订单` }
+    return { code: 0, data: { assigned: count, riderId } }
   },
 
-  // ========== 骑手获取订单 ==========
-
-  async riderGetOrders() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('riderGetOrders params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { riderId, deliveryStatus } = params
-
-    let query = db.collection('orders').where({ riderId })
-
-    if (deliveryStatus) {
-      query = query.where({ deliveryStatus: deliveryStatus })
-    }
-
-    const res = await query.orderBy('assignedTime', 'asc').get()
-    return { code: 0, data: res.data }
-  },
-
-  // ========== 骑手更新配送状态 ==========
-
-  async riderUpdateStatus() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('riderUpdateStatus params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { orderId, deliveryStatus } = params
-
-    const updateData = {
-      deliveryStatus,
-      updateTime: Date.now()
-    }
-
-    // 根据配送状态更新主订单状态
-    if (deliveryStatus === 'delivering') {
-      updateData.status = 'delivering'
-      updateData.deliveryStartTime = Date.now()
-    } else if (deliveryStatus === 'completed') {
-      updateData.status = 'completed'
-      updateData.deliveryCompleteTime = Date.now()
-    }
-
-    await db.collection('orders').doc(orderId).update(updateData)
-
-    const statusMap = {
-      'accepted': '已接单',
-      'delivering': '配送中',
-      'completed': '已完成'
-    }
-
-    return { code: 0, msg: `状态已更新为：${statusMap[deliveryStatus] || deliveryStatus}` }
-  },
-
-  // ========== 骑手切换在线状态 ==========
-
-  async riderToggleStatus() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('riderToggleStatus params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { riderId, riderStatus } = params
-
-    await db.collection('riders').doc(riderId).update({
-      riderStatus,
-      updateTime: Date.now()
-    })
-
-    return { code: 0, msg: riderStatus === 'online' ? '骑手已上线' : '骑手已下线' }
-  },
-
-  // ========== 认证管理 ==========
-
-  async getCerts() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getCerts params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    let query = db.collection('certs').orderBy('submitTime', 'desc')
-
-    if (params.status) {
-      query = query.where({ status: params.status })
-    }
-
-    const res = await query.limit(100).get()
-    return { code: 0, data: res.data, total: res.data.length }
-  },
-
-  async submitCert() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('submitCert params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    // 检查是否已有记录
-    const existRes = await db.collection('certs').where({
-      userId: params.userId
-    }).get()
-
-    const certData = {
-      userId: params.userId,
-      userName: params.userName || '邻居',
-      idCardUrl: params.idCardUrl || '',
-      billUrl: params.billUrl || '',
-      communityName: params.communityName || '',
-      status: 'pending',
-      submitTime: params.submitTime || new Date().toISOString()
-    }
-
-    if (existRes.data && existRes.data.length > 0) {
-      // 更新现有记录
-      await db.collection('certs').doc(existRes.data[0]._id).update(certData)
-      return { code: 0, data: { id: existRes.data[0]._id } }
+  async riderLogin(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { phone, password } = params
+    let rider = null
+    if (uniID) {
+      const res = await this.uniID.login({ username: phone, password, queryField: ['phone'] })
+      if (res.errCode) return { code: -1, msg: res.errMsg }
+      const r = await db.collection('riders').where({ _id: res.uid }).get()
+      rider = r.data && r.data[0]
     } else {
-      // 新增记录
-      const res = await db.collection('certs').add(certData)
-      return { code: 0, data: { id: res.id } }
+      rider = await plainPwdMatch('riders', phone, password)
+    }
+    if (!rider) return { code: -1, msg: '账号或密码错误' }
+    return {
+      code: 0,
+      data: {
+        riderId: rider._id,
+        token: 'rider_' + rider._id,
+        tokenExpired: Date.now() + 7200000,
+        riderInfo: rider
+      }
     }
   },
 
-  async getCertStatus() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
-
-    const res = await db.collection('certs').where({
-      userId: params.userId
-    }).get()
-
-    if (res.data && res.data.length > 0) {
-      return { code: 0, data: res.data[0] }
-    }
-    return { code: 0, data: { status: 'none' } }
+  async riderGetOrders(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { riderId, status, deliveryStatus } = params
+    const where = { riderId }
+    if (status) where.status = status
+    if (deliveryStatus) where.deliveryStatus = deliveryStatus
+    const r = await db.collection('orders').where(where).orderBy('createdAt', 'desc').limit(50).get()
+    return { code: 0, data: r.data || [] }
   },
 
-  async approveCert() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('approveCert params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const res = await db.collection('certs').where({
-      userId: params.userId
-    }).get()
-
-    if (res.data && res.data.length > 0) {
-      await db.collection('certs').doc(res.data[0]._id).update({
-        status: 'certified',
-        certTime: new Date().toISOString()
-      })
-    }
-
-    return { code: 0, msg: '认证已通过' }
+  // 骑手抢单池：商家已确认分拣、待骑手接单的订单（按 merchantId 隔离）
+  async riderGetAvailableOrders(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const merchantId = params.merchantId
+    if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
+    const r = await db.collection('orders')
+      .where({ merchantId, status: 'sorting' })
+      .orderBy('createdAt', 'asc')
+      .limit(50)
+      .get()
+    // 排除已被骑手接走的（riderId 已存在）
+    const list = (r.data || []).filter(o => !o.riderId)
+    return { code: 0, data: list }
   },
 
-  async rejectCert() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('rejectCert params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const res = await db.collection('certs').where({
-      userId: params.userId
-    }).get()
-
-    if (res.data && res.data.length > 0) {
-      await db.collection('certs').doc(res.data[0]._id).update({
-        status: 'rejected',
-        rejectReason: params.reason || ''
-      })
-    }
-
-    return { code: 0, msg: '认证已拒绝' }
-  },
-
-  async revokeCert() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('revokeCert params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const res = await db.collection('certs').where({
-      userId: params.userId
-    }).get()
-
-    if (res.data && res.data.length > 0) {
-      await db.collection('certs').doc(res.data[0]._id).update({
-        status: 'none',
-        certTime: ''
-      })
-    }
-
-    return { code: 0, msg: '认证已撤销' }
-  },
-
-  // ========== 帖子管理 ==========
-
-  async getPosts() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getPosts params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const _ = db.command
-
-    // 构建查询条件
-    let whereClause = {}
-    if (params.status !== undefined && params.status !== '') {
-      whereClause.status = Number(params.status)
-    }
-    if (params.category) {
-      whereClause.categoryIndex = Number(params.category)
-    }
-    if (params.keyword) {
-      whereClause.title = _.regex(params.keyword)
-    }
-
-    const page = params.page || 1
-    const pageSize = params.pageSize || 20
-    const query = db.collection('posts')
-      .where(Object.keys(whereClause).length > 0 ? whereClause : {})
-      .orderBy('createdAt', 'desc')
-      .skip((page - 1) * pageSize)
-      .limit(pageSize)
-    const res = await query.get()
-
-    return { code: 0, data: res.data, total: res.data.length }
-  },
-
-  async getPostDetail() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('getPostDetail params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const res = await db.collection('posts').doc(params.postId).get()
-    if (res.data) {
-      return { code: 0, data: res.data }
-    }
-    return { code: 1, msg: '帖子不存在' }
-  },
-
-  async createPost() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('createPost params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    const postData = {
-      ...params,
-      createdAt: params.createdAt || new Date().toISOString(),
-      likes: 0,
-      comments: 0,
-      viewCount: 0
-    }
-
-    const res = await db.collection('posts').add(postData)
-    return { code: 0, data: { id: res.id } }
-  },
-
-  async updatePost() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const { id, ...data } = params
-    console.log('updatePost:', id, data)
-    const db = uniCloud.database()
-
-    await db.collection('posts').doc(id).update({
-      ...data,
-      updatedAt: new Date().toISOString()
+  // 骑手抢单：把订单分配给自己，订单进入配送中
+  async riderClaimOrder(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const orderId = params.orderId
+    const riderId = params.riderId
+    if (!orderId || !riderId) return { code: -1, msg: 'orderId 和 riderId 必填' }
+    // 先读再写，避免覆盖别人的接单
+    const r = await db.collection('orders').doc(orderId).get()
+    const order = r.data && r.data[0]
+    if (!order) return { code: -1, msg: '订单不存在' }
+    if (order.riderId && order.riderId !== riderId) return { code: -1, msg: '订单已被其他骑手接走' }
+    await db.collection('orders').doc(orderId).update({
+      riderId,
+      deliveryStatus: 'delivering',
+      status: 'delivering',
+      pickedUpAt: new Date(),
+      updatedAt: new Date()
     })
-
-    return { code: 0 }
+    return { code: 0, data: { success: true } }
   },
 
-  async deletePost() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('deletePost params:', JSON.stringify(params))
-    const db = uniCloud.database()
-
-    await db.collection('posts').doc(params.id).remove()
-    return { code: 0 }
+  // 一次性修复脚本：老骑手账号没绑 merchantId，按 phone 反推补上
+  // 1) 优先用最近订单的 merchantId；2) 否则用唯一的 merchant
+  async fixRiderMerchantId(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const phone = params.phone
+    if (!phone) return { code: -1, msg: 'phone 必填' }
+    const r = await db.collection('riders').where({ phone }).get()
+    const rider = r.data && r.data[0]
+    if (!rider) return { code: -1, msg: '骑手不存在' }
+    if (rider.merchantId) return { code: 0, data: { merchantId: rider.merchantId, fixed: false, msg: 'merchantId 已存在' } }
+    let merchantId = null
+    // 1) 最近订单的 merchantId
+    const o = await db.collection('orders').where({ riderId: rider._id }).orderBy('createdAt', 'desc').limit(1).get()
+    if (o.data && o.data[0] && o.data[0].merchantId) {
+      merchantId = o.data[0].merchantId
+    } else {
+      // 2) 单商家场景：直接用唯一的那个
+      const m = await db.collection('merchants').limit(2).get()
+      if (m.data && m.data.length === 1) {
+        merchantId = m.data[0]._id
+      }
+    }
+    if (!merchantId) return { code: -1, msg: '反推不到 merchantId，请商家在骑手管理里删了重加' }
+    await db.collection('riders').doc(rider._id).update({ merchantId, updatedAt: new Date() })
+    return { code: 0, data: { merchantId, fixed: true, msg: '已自动补上' } }
   },
 
-  async togglePostStatus() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    console.log('togglePostStatus params:', JSON.stringify(params))
-    const db = uniCloud.database()
-    const { id, status, blockedByAdmin, blockReason } = params
-
-    // 获取当前帖子信息
-    const postRes = await db.collection('posts').doc(id).get()
-    if (!postRes.data) {
-      return { code: 1, msg: '帖子不存在' }
-    }
-
-    // 如果是上架操作，检查是否被商家下架
-    if (status === 1 && postRes.data.blockedByAdmin) {
-      return { code: 1, msg: '该帖子已被管理员下架，请联系管理员' }
-    }
-
-    // 构建更新数据
-    const updateData = { status }
-    if (status === 0 && blockedByAdmin) {
-      // 商家下架时记录原因
-      updateData.blockedByAdmin = true
-      updateData.blockReason = blockReason || '管理员下架'
-      updateData.blockTime = Date.now()
-    } else if (status === 1) {
-      // 用户上架时，清除商家下架标记
-      updateData.blockedByAdmin = false
-      updateData.blockReason = ''
-    }
-
-    await db.collection('posts').doc(id).update(updateData)
-
-    return { code: 0, msg: status === 1 ? '已上架' : '已下架' }
+  async riderToggleStatus(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { riderId, status } = params
+    await db.collection('riders').doc(riderId).update({ riderStatus, updatedAt: new Date() })
+    return { code: 0, data: { success: true } }
   },
 
-  async getMyPosts() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
-
-    let query = db.collection('posts').where({
-      authorId: params.userId
-    }).orderBy('createdAt', 'desc')
-
-    if (params.status !== undefined) {
-      query = query.where({
-        authorId: params.userId,
-        status: Number(params.status)
-      })
-    }
-
-    const res = await query.get()
-    return { code: 0, data: res.data }
+  async riderChangePassword(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { riderId, oldPassword, newPassword } = params
+    const r = await db.collection('riders').doc(riderId).get()
+    const rider = r.data && r.data[0]
+    if (!rider) return { code: -1, msg: '骑手不存在' }
+    if (rider.password !== oldPassword) return { code: -1, msg: '原密码错误' }
+    await db.collection('riders').doc(riderId).update({ password: newPassword, updatedAt: new Date() })
+    return { code: 0, data: { success: true } }
   },
 
-  async toggleLike() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
+  // ==================== 商家看板 / 报表 ====================
 
-    const postRes = await db.collection('posts').doc(params.postId).get()
-    if (postRes.data) {
-      const isLiked = postRes.data.likedUsers?.includes(params.userId)
-      const updateData = isLiked
-        ? { likes: db.command.inc(-1), [`likedUsers`]: db.command.pull(params.userId) }
-        : { likes: db.command.inc(1), [`likedUsers`]: db.command.addToSet(params.userId) }
+  async getDashboard(params) {
+    // 统一从 this.event 拿真实入参（URL 化下解构签名不可靠，_before 已挂到 this.event）
+    const _p = (params && Object.keys(params).length) ? params : (this.event || {})
+    const merchantId = _p.merchantId
+    const timeFilter = _p.timeFilter || 'today'
+    const customDate = _p.customDate || ''
+    if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
 
-      await db.collection('posts').doc(params.postId).update(updateData)
-    }
+    const range = computeTimeRange(timeFilter, customDate)
+    const startMs = range.start.getTime()
+    const endMs = range.end.getTime()
 
-    return { code: 0 }
-  },
+    // 一次拉完该商家全部订单（limit 2000，业务量级够用；超量改分页聚合）
+    const all = await db.collection('orders').where({ merchantId }).limit(2000).get()
+    const list = (all.data || []).filter(o => o.createdAt)
 
-  async getComments() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
-
-    const res = await db.collection('comments').where({
-      postId: params.postId
-    }).orderBy('createdAt', 'desc').get()
-
-    return { code: 0, data: res.data }
-  },
-
-  async createComment() {
-    const httpData = getHttpParams({}, this)
-    const params = httpData.params || {}
-    const db = uniCloud.database()
-
-    const commentData = {
-      postId: params.postId,
-      userId: params.userId,
-      authorName: params.authorName || '邻居',
-      content: params.content,
-      createdAt: new Date().toISOString()
-    }
-
-    await db.collection('comments').add(commentData)
-
-    // 更新帖子评论数
-    await db.collection('posts').doc(params.postId).update({
-      comments: db.command.inc(1)
+    // 4 卡片：时间范围内所有订单
+    const inRange = list.filter(o => {
+      const t = new Date(o.createdAt).getTime()
+      return t >= startMs && t <= endMs
     })
+    const todayOrders = inRange.length
+    const totalSales = inRange
+      .filter(o => o.status === 'completed')
+      .reduce((s, o) => s + (Number(o.payAmount || o.totalAmount) || 0), 0)
 
-    return { code: 0 }
+    // 待处理：所有未完成订单（与 4 圈圈口径一致，不受 timeFilter 影响）
+    // 用 normalizeOrderStatus 兼容 canonical 英文值 + 中文标签（如"已接单"）
+    const pendingOrders = list.filter(o =>
+      ['pending_payment', 'paid', 'pending_sorting', 'sorting'].includes(normalizeOrderStatus(o.status))
+    ).length
+
+    // 4 状态圈圈：所有时间累计
+    const counts = {
+      pending_payment: list.filter(o => normalizeOrderStatus(o.status) === 'pending_payment').length,
+      pending_sorting: list.filter(o => ['paid', 'pending_sorting'].includes(normalizeOrderStatus(o.status))).length,
+      delivering: list.filter(o => normalizeOrderStatus(o.status) === 'delivering').length,
+      completed: list.filter(o => normalizeOrderStatus(o.status) === 'completed').length
+    }
+
+    // 在线商品：一次 count 查询
+    const p = await db.collection('products').where({ merchantId, status: 'online' }).count()
+    const onlineProducts = (p.result && p.result.total) || 0
+
+    return {
+      code: 0,
+      data: {
+        timeRange: { type: timeFilter, label: range.label, start: range.start, end: range.end },
+        todayOrders,
+        totalSales: Number(totalSales.toFixed(2)),
+        pendingOrders,
+        onlineProducts,
+        counts
+      }
+    }
   },
 
-  // ========== 调试 ==========
+  async getReportData(params) {
+    return await this.getDashboard(params)
+  },
+
+  // ==================== IM 通讯 ====================
+
+  async getConversations(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.merchantId) where.merchantId = params.merchantId
+    if (params.userId) where.userId = params.userId
+    const r = await db.collection('conversations').where(where).orderBy('lastMessageAt', 'desc').get()
+    return { code: 0, data: r.data || [] }
+  },
+
+  async getMessages(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.conversationId) where.conversationId = params.conversationId
+    if (params.merchantId) where.merchantId = params.merchantId
+    const r = await db.collection('messages').where(where).orderBy('createdAt', 'asc').limit(100).get()
+    return { code: 0, data: r.data || [] }
+  },
+
+  async sendMessage(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const doc = { ...data, createdAt: new Date(), resolved: false }
+    if (!doc.conversationId) doc.conversationId = 'c_' + (data.merchantId || '') + '_' + (data.userId || '')
+    await db.collection('messages').add(doc)
+    await db.collection('conversations').where({ _id: doc.conversationId }).update({
+      lastMessage: data.content,
+      lastMessageAt: new Date(),
+      updatedAt: new Date()
+    })
+    return { code: 0, data: { success: true } }
+  },
+
+  async markAsRead(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = { ...params }
+    await db.collection('messages').where(where).update({ read: true })
+    return { code: 0, data: { success: true } }
+  },
+
+  // ==================== 特惠（Flash Sale） ====================
+
+  async getFlashSale(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.merchantId) where.merchantId = params.merchantId
+    const r = await db.collection('flash_sales').where(where).orderBy('startTime', 'desc').get()
+    return { code: 0, data: r.data || [] }
+  },
+
+  async saveFlashSale(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    // 兼容前端传 id 或 _id
+    const existingId = data._id || data.id
+    if (existingId) {
+      // update：不改 createdAt，不接受前端传 id
+      const update = {
+        name: data.name,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        status: data.status,
+        updatedAt: new Date()
+      }
+      await db.collection('flash_sales').doc(existingId).update(update)
+      return { code: 0, data: { id: existingId, _id: existingId } }
+    } else {
+      // add
+      const doc = {
+        _id: 'fs_' + Date.now(),
+        name: data.name,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        status: data.status !== undefined ? data.status : true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+      await db.collection('flash_sales').add(doc)
+      return { code: 0, data: { id: doc._id, _id: doc._id } }
+    }
+  },
+
+  // ==================== 特惠商品（Flash Sale Products） ====================
+  // flash_sale_products 是特惠活动下的商品子集。为简化模型，存在 flash_sales.doc.products 数组里
+
+  async getFlashSaleProducts(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { flashSaleId } = params
+    const r = await db.collection('flash_sales').doc(flashSaleId).get()
+    const fs = r.data && r.data[0]
+    const list = (fs && fs.products) || []
+    await resolveFileIdsInItems(list)
+    return { code: 0, data: list }
+  },
+
+  async addFlashSaleProduct(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    // 前端 saveProduct / addSelectedProducts 发的是 name/image/originalPrice/flashPrice/stock/specs
+    const { flashSaleId, name, image, originalPrice, flashPrice, stock, specs } = params
+    if (!flashSaleId) return { code: -1, msg: 'flashSaleId 必填' }
+    const r = await db.collection('flash_sales').doc(flashSaleId).get()
+    const fs = r.data && r.data[0]
+    if (!fs) return { code: -1, msg: '特惠活动不存在' }
+    const newProduct = { _id: 'fsp_' + Date.now(), name, image, originalPrice, flashPrice, stock, specs: specs || [] }
+    const products = (fs.products || []).concat([newProduct])
+    await db.collection('flash_sales').doc(flashSaleId).update({ products, updatedAt: new Date() })
+    return { code: 0, data: { success: true, product: newProduct } }
+  },
+
+  async updateFlashSaleProduct(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, name, image, originalPrice, flashPrice, stock, specs } = params
+    if (!id) return { code: -1, msg: 'id 必填' }
+    const r = await db.collection('flash_sales').get()
+    const sales = r.data || []
+    const owner = sales.find(fs => (fs.products || []).some(p => p._id === id))
+    if (!owner) return { code: -1, msg: '特惠商品不存在' }
+    const newProducts = (owner.products || []).map(p => p._id === id
+      ? { ...p, name, image, originalPrice, flashPrice, stock, specs: specs || p.specs || [] }
+      : p)
+    await db.collection('flash_sales').doc(owner._id).update({ products: newProducts, updatedAt: new Date() })
+    return { code: 0, data: { success: true } }
+  },
+
+  async deleteFlashSaleProduct(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    if (!id) return { code: -1, msg: 'id 必填' }
+    const r = await db.collection('flash_sales').get()
+    const sales = r.data || []
+    const owner = sales.find(fs => (fs.products || []).some(p => p._id === id))
+    if (!owner) return { code: -1, msg: '特惠商品不存在' }
+    const newProducts = (owner.products || []).filter(p => p._id !== id)
+    await db.collection('flash_sales').doc(owner._id).update({ products: newProducts, updatedAt: new Date() })
+    return { code: 0, data: { success: true } }
+  },
+
+  // ==================== 图片上传（占位） ====================
+
+  async uploadImage(params) {
+    // 客户端走 uni.uploadFile，云端 event.fileID 是临时文件 ID
+    // 客户端可在 formData 里传 cloudPath 自定义路径
+    const event = this.event || {}
+    const fileID = event.fileID || (params && params.fileID)
+    if (!fileID) return { code: -1, msg: 'fileID 必填（请通过 uni.uploadFile 触发）' }
+    const ext = ((event.contentType || 'image/jpeg').split('/')[1] || 'jpg').replace(/[^a-z0-9]/gi, '')
+    const cloudPath = (params && params.cloudPath) || ('merchant/' + Date.now() + '.' + (ext || 'jpg'))
+    try {
+      const r = await uniCloud.uploadFile({ fileID, cloudPath })
+      return { code: 0, data: { fileID: r.fileID, url: r.fileURL } }
+    } catch (e) {
+      return { code: -1, msg: '上传失败: ' + (e.message || e.errMsg || '未知错误') }
+    }
+  },
+
+  async fixProductCategories() {
+    return { code: 0, data: { fixed: 0, note: '无分类错位，无需修复' } }
+  },
+
+  async diagnoseCategories() {
+    const r = await db.collection('categories').limit(100).get()
+    return { code: 0, data: { count: (r.data || []).length, items: r.data || [] } }
+  },
 
   async debugCategoryPage() {
-    const db = uniCloud.database()
+    return { code: 0, data: { debug: 'no-op' } }
+  },
 
-    // 获取所有分类
-    const catRes = await db.collection('categories').orderBy('sort', 'asc').get()
+  // 清理空 flash_sale 文档（无商品的）。保留至少 1 条用于前端展示。
+  async fixFlashSalesCleanup() {
+    const r = await db.collection('flash_sales').get()
+    const all = r.data || []
+    const withProducts = all.filter(s => (s.products || []).length > 0)
+    const empty = all.filter(s => (s.products || []).length === 0)
+    // 如果空活动数量 > 0 且至少有一条有商品的活动，全删空活动
+    if (empty.length > 0 && withProducts.length >= 1) {
+      for (const s of empty) {
+        await db.collection('flash_sales').doc(s._id).remove()
+      }
+      return { code: 0, data: { deleted: empty.length, kept: withProducts.length, keptIds: withProducts.map(s => s._id) } }
+    }
+    return { code: 0, data: { deleted: 0, kept: all.length, note: empty.length === 0 ? '没有空活动' : '有商品的活动不足1条，未清理' } }
+  },
 
-    // 获取所有商品
-    const prodRes = await db.collection('products').orderBy('categoryId', 'asc').get()
+  // 一次性数据修复：回填商品划线价（originalPrice）
+  // 适用：历史商品没填原价，或原价 < 售价（不合理）；统一兜底为 price * 1.5
+  // 同时修顶层 originalPrice 和 specs[i].originalPrice
+  async fixProductsOriginalPrice() {
+    const all = await db.collection('products').limit(1000).get()
+    const products = all.data || []
+    let fixed = 0
+    for (const p of products) {
+      const upd = {}
+      // 顶层
+      const tp = Number(p.price) || 0
+      const top0 = Number(p.originalPrice) || 0
+      if (tp > 0 && (!top0 || top0 < tp)) {
+        upd.originalPrice = Number((tp * 1.5).toFixed(2))
+      }
+      // specs
+      if (Array.isArray(p.specs)) {
+        const newSpecs = p.specs.map(s => {
+          const sp = Number(s.price) || 0
+          const sop = Number(s.originalPrice) || 0
+          if (sp > 0 && (!sop || sop < sp)) {
+            return { ...s, originalPrice: Number((sp * 1.5).toFixed(2)) }
+          }
+          return s
+        })
+        // 检测是否有变化
+        const changed = newSpecs.some((s, i) => s.originalPrice !== p.specs[i].originalPrice)
+        if (changed) upd.specs = newSpecs
+      }
+      if (Object.keys(upd).length) {
+        upd.updatedAt = new Date()
+        await db.collection('products').doc(p._id).update(upd)
+        fixed++
+      }
+    }
+    return { code: 0, data: { total: products.length, fixed } }
+  },
 
-    // 原始数据
-    const debugInfo = {
-      categories: catRes.data,  // 不转换，看原始类型
-      products: prodRes.data.map(p => ({
-        name: p.name,
-        categoryId: p.categoryId,
-        categoryIdType: typeof p.categoryId,
-        categoryName: p.categoryName
-      })),
-      // 测试用 categories[0]._id 和 products[0].categoryId 是否相等
-      testResult: catRes.data.length > 0 && prodRes.data.length > 0
-        ? String(catRes.data[0]._id) === String(prodRes.data[0].categoryId)
-        : 'no data'
+  // ==================== 邻里（Posts） ====================
+
+  async getPosts(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = { status: 'active' }
+    if (params.communityId) where.communityId = params.communityId
+    if (params.userId) where.userId = params.userId
+    const r = await db.collection('posts').where(where).orderBy('createdAt', 'desc').limit(50).get()
+    return { code: 0, data: r.data || [] }
+  },
+
+  async createPost(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const doc = { ...data, likeCount: 0, commentCount: 0, status: 'active', createdAt: new Date(), updatedAt: new Date() }
+    if (!doc._id) doc._id = 'post_' + Date.now()
+    await db.collection('posts').add(doc)
+    return { code: 0, data: { _id: doc._id } }
+  },
+
+  async toggleLike(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { postId, userId } = params
+    const r = await db.collection('posts').doc(postId).get()
+    const post = r.data && r.data[0]
+    if (!post) return { code: -1, msg: '帖子不存在' }
+    const liked = (post.likedUserIds || []).includes(userId)
+    const likedUserIds = liked
+      ? post.likedUserIds.filter(id => id !== userId)
+      : [...(post.likedUserIds || []), userId]
+    await db.collection('posts').doc(postId).update({
+      likedUserIds,
+      likeCount: likedUserIds.length,
+      updatedAt: new Date()
+    })
+    return { code: 0, data: { liked: !liked, likeCount: likedUserIds.length } }
+  },
+
+  async getMyPosts(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { userId, page, pageSize } = params
+    const r = await db.collection('posts').where({ userId }).orderBy('createdAt', 'desc').get()
+    return { code: 0, data: r.data || [] }
+  },
+
+  // ==================== 认证（Certifications） ====================
+
+  async getCertStatus(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { userId } = params
+    const r = await db.collection('certifications').where({ userId }).orderBy('createdAt', 'desc').limit(1).get()
+    return { code: 0, data: r.data && r.data[0] ? r.data[0] : { status: 'none' } }
+  },
+
+  async submitCert(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const doc = { ...data, status: 'pending', createdAt: new Date(), updatedAt: new Date() }
+    if (!doc._id) doc._id = 'cert_' + Date.now()
+    await db.collection('certifications').add(doc)
+    return { code: 0, data: { _id: doc._id } }
+  },
+
+  async checkCert(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, action, rejectReason } = params
+    const status = action === 'approve' ? 'certified' : 'rejected'
+    await db.collection('certifications').doc(id).update({
+      status,
+      rejectReason: action === 'approve' ? '' : (rejectReason || ''),
+      reviewedAt: new Date(),
+      updatedAt: new Date()
+    })
+    return { code: 0, data: { success: true } }
+  },
+
+  // ==================== 用户注册（测试用） ====================
+
+  async userRegister(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { phone, password, nickname } = params
+    const existing = await db.collection('users').where({ phone }).get()
+    if (existing.data && existing.data.length) return { code: -1, msg: '手机号已注册' }
+    const doc = {
+      _id: 'u_' + Date.now(),
+      phone, password, nickname: nickname || '用户' + phone.slice(-4),
+      avatar: 'https://img.icons8.com/color/96/user.png',
+      communityId: communityId || '',
+      certStatus: 'none',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+    await db.collection('users').add(doc)
+    return { code: 0, data: { userId: doc._id, token: 'user_' + doc._id, tokenExpired: Date.now() + 7200000 } }
+  },
+
+  async userLogin(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { phone, password } = params
+    let user = null
+    if (uniID) {
+      const res = await this.uniID.login({ username: phone, password, queryField: ['phone'] })
+      if (res.errCode) return { code: -1, msg: res.errMsg }
+      const r = await db.collection('users').where({ _id: res.uid }).get()
+      user = r.data && r.data[0]
+    } else {
+      user = await plainPwdMatch('users', phone, password)
+    }
+    if (!user) return { code: -1, msg: '账号或密码错误' }
+    return {
+      code: 0,
+      data: {
+        userId: user._id,
+        token: 'user_' + user._id,
+        tokenExpired: Date.now() + 7200000,
+        userInfo: user
+      }
+    }
+  },
+
+  // ==================== 一次性 seed 端点 ====================
+  // 浏览器 GET 访问 https://.../merchant-api/seed 即可生成测试数据
+  // 仅用于联调测试，联调完成后请删除此方法
+
+  // 清空 orders（联调时清旧脏数据用）
+  async clearOrders() {
+    const r = await db.collection('orders').where({ _id: dbCmd.exists(true) }).remove()
+    return { code: 0, data: { removed: r.deleted || 0 } }
+  },
+
+  // 诊断：尝试 add 一条带 orderNo/merchantId/products 的订单，看落库结构
+  async diagAdd() {
+    const sample = {
+      orderNo: 'DIAG_' + Date.now(),
+      merchantId: 'm_test_001',
+      userId: 'u_test_001',
+      items: [{ name: '番茄', spec: '500g', price: 3.5, qty: 2 }],
+      totalAmount: 7.0,
+      payAmount: 7.0,
+      address: { name: 'test', phone: '13800000000', address: '测试', doorNo: '101' },
+      payMethod: '微信支付',
+      status: 'pending_payment',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+    const r = await db.collection('orders').add(sample)
+    return { code: 0, data: { id: r.id, sample } }
+  },
+
+  // 验证云对象方法入参机制
+  async diagMethod(data) {
+    const _rawData = data
+    const _rawDataKeys = data && typeof data === 'object' ? Object.keys(data) : null
+    const _rawDataSerialized = data ? JSON.stringify(data).slice(0, 400) : 'NULL'
+    const _rawThisEvent = this.event
+    const _rawThisEventKeys = this.event && typeof this.event === 'object' ? Object.keys(this.event) : null
+    const _rawThisEventSerialized = this.event ? JSON.stringify(this.event).slice(0, 400) : 'NO_EVENT'
+    const _rawEventBefore = this._rawEventBefore
+    const _rawEventBeforeKeys = this._rawEventBefore && typeof this._rawEventBefore === 'object' ? Object.keys(this._rawEventBefore) : null
+    const _rawEventBeforeSerialized = this._rawEventBefore ? JSON.stringify(this._rawEventBefore).slice(0, 400) : 'NULL'
+
+    // 用 getHttpInfo 拿完整 HTTP 信息
+    let httpInfo = null
+    try { httpInfo = this.getHttpInfo() } catch (e) { httpInfo = { error: e.message } }
+
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    return {
+      code: 0,
+      data: {
+        argsLength: arguments.length,
+        rawDataKeys: _rawDataKeys,
+        rawDataSerialized: _rawDataSerialized,
+        rawEventBeforeKeys: _rawEventBeforeKeys,
+        rawEventBeforeSerialized: _rawEventBeforeSerialized,
+        rawThisEventKeys: _rawThisEventKeys,
+        rawThisEventSerialized: _rawThisEventSerialized,
+        dataKeys: data && typeof data === 'object' ? Object.keys(data) : null,
+        dataSerialized: data ? JSON.stringify(data).slice(0, 400) : 'NULL',
+        httpInfoKeys: httpInfo && typeof httpInfo === 'object' ? Object.keys(httpInfo) : null,
+        httpInfoSerialized: httpInfo ? JSON.stringify(httpInfo).slice(0, 800) : 'NO_HTTP_INFO'
+      }
+    }
+  },
+
+  // 诊断：读最后一条订单的完整结构
+  async diagLastOrder() {
+    const r = await db.collection('orders').orderBy('createdAt', 'desc').limit(1).get()
+    return { code: 0, data: r.data && r.data[0] }
+  },
+
+  async seed() {
+    const report = { merchants: [], categories: [], products: [], communities: [], riders: [], users: [] }
+
+    const merchantId = 'm_test_001'
+    const merchantPwd = 'merchant123'
+    const m = await ensureSeedDoc('merchants', {
+      _id: merchantId,
+      shopName: '老李家生鲜',
+      ownerName: '李老板',
+      phone: '13800138000',
+      password: merchantPwd,
+      address: '杭州市西湖区文一路 1 号',
+      logo: 'https://img.icons8.com/color/96/shop.png',
+      status: 'online',
+      rating: 4.8,
+      salesCount: 0,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    })
+    report.merchants.push(m)
+
+    const cats = [
+      { _id: 'c_veg',  name: '蔬菜', key: 'vegetable', sort: 1, icon: '🥬' },
+      { _id: 'c_fruit',name: '水果', key: 'fruit',     sort: 2, icon: '🍎' },
+      { _id: 'c_meat', name: '肉禽', key: 'meat',      sort: 3, icon: '🍖' }
+    ]
+    for (const c of cats) {
+      const r = await ensureSeedDoc('categories', { ...c, merchantId, createdAt: new Date(), updatedAt: new Date() })
+      report.categories.push(r)
     }
 
-    return { code: 0, data: debugInfo }
+    const products = [
+      { _id: 'p_001', category: 'c_veg',   name: '本地青菜',     spec: '500g', price: 3.5,  originalPrice: 5.0,  stock: 100, coverImage: 'https://img.icons8.com/color/96/broccoli.png', tags: ['新鲜', '当日采摘'], status: 'online' },
+      { _id: 'p_002', category: 'c_veg',   name: '西红柿',       spec: '500g', price: 4.8,  originalPrice: 6.0,  stock: 80,  coverImage: 'https://img.icons8.com/color/96/tomato.png',     tags: ['沙瓤'],         status: 'online' },
+      { _id: 'p_003', category: 'c_fruit', name: '山东红富士',   spec: '1kg',  price: 9.9,  originalPrice: 12.0, stock: 60,  coverImage: 'https://img.icons8.com/color/96/apple.png',       tags: ['脆甜'],         status: 'online' },
+      { _id: 'p_004', category: 'c_fruit', name: '海南香蕉',     spec: '1kg',  price: 6.5,  originalPrice: 8.0,  stock: 50,  coverImage: 'https://img.icons8.com/color/96/banana.png',      tags: ['自然熟'],       status: 'online' },
+      { _id: 'p_005', category: 'c_meat',  name: '土鸡蛋',       spec: '30枚', price: 28.0, originalPrice: 35.0, stock: 40,  coverImage: 'https://img.icons8.com/color/96/eggs.png',        tags: ['散养'],         status: 'online' }
+    ]
+    for (const p of products) {
+      const r = await ensureSeedDoc('products', { ...p, merchantId, sold: 0, images: [p.coverImage], description: p.name, createdAt: new Date(), updatedAt: new Date() })
+      report.products.push(r)
+    }
+
+    const cm = await ensureSeedDoc('communities', {
+      _id: 'cm_001',
+      merchantId,
+      name: '文一路怡景湾',
+      address: '杭州市西湖区文一路 188 号',
+      longitude: 120.123,
+      latitude: 30.276,
+      houseCount: 600,
+      userCount: 1200,
+      status: 'active',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    })
+    report.communities.push(cm)
+
+    const riderId = 'r_test_001'
+    const riderPwd = 'rider123'
+    const r = await ensureSeedDoc('riders', {
+      _id: riderId,
+      phone: '13900139000',
+      password: riderPwd,
+      name: '王骑手',
+      avatar: 'https://img.icons8.com/color/96/user.png',
+      merchantId,
+      riderStatus: 'idle',
+      rating: 4.9,
+      deliveryCount: 0,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    })
+    report.riders.push(r)
+
+    const userId = 'u_test_001'
+    const userPwd = 'user123'
+    const u = await ensureSeedDoc('users', {
+      _id: userId,
+      nickname: '小张',
+      avatar: 'https://img.icons8.com/color/96/user-female.png',
+      phone: '13700137000',
+      password: userPwd,
+      communityId: 'cm_001',
+      certStatus: 'none',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    })
+    report.users.push(u)
+
+    return {
+      code: 0,
+      msg: 'seed 完成（明文密码模式，uni-id-common 未加载时）',
+      mode: uniID ? 'uni-id' : 'plaintext-fallback',
+      counts: {
+        merchants: report.merchants.length,
+        categories: report.categories.length,
+        products: report.products.length,
+        communities: report.communities.length,
+        riders: report.riders.length,
+        users: report.users.length
+      },
+      testAccounts: {
+        merchant: { id: merchantId, password: 'merchant123', name: '老李家生鲜' },
+        rider:    { id: riderId,    password: 'rider123',    name: '王骑手',   phone: '13900139000' },
+        user:     { id: userId,     password: 'user123',     name: '小张',     phone: '13700137000' }
+      },
+      note: '_action=created 表示新建；=exists 表示已存在（可重跑，不会重复）'
+    }
   }
 }

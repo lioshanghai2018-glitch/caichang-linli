@@ -1,0 +1,17 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "orderId": { "bsonType": "string" },
+    "orderNo": { "bsonType": "string" },
+    "merchantId": { "bsonType": "string" },
+    "userId": { "bsonType": "string" },
+    "reason": { "bsonType": "string" },
+    "refundAmount": { "bsonType": "double", "defaultValue": 0 },
+    "status": { "bsonType": "string", "defaultValue": "pending", "description": "pending / approved / rejected" },
+    "processedBy": { "bsonType": "string", "defaultValue": "" },
+    "processedAt": { "bsonType": "datetime" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

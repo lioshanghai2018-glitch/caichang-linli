@@ -1,0 +1,19 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string", "description": "uni-id 账号 _id" },
+    "shopName": { "bsonType": "string", "title": "店铺名称", "description": "店铺名称" },
+    "ownerName": { "bsonType": "string", "title": "店主姓名", "defaultValue": "" },
+    "phone": { "bsonType": "string", "title": "联系电话", "description": "联系电话" },
+    "password": { "bsonType": "string", "title": "密码", "defaultValue": "", "description": "明文或加密密码（联调模式用明文）" },
+    "address": { "bsonType": "string", "title": "店铺地址", "description": "店铺地址" },
+    "logo": { "bsonType": "string", "title": "logo", "defaultValue": "", "description": "店铺 logo URL" },
+    "status": { "bsonType": "string", "title": "状态", "defaultValue": "open", "description": "open / closed" },
+    "rating": { "bsonType": "double", "title": "评分", "defaultValue": 5.0, "description": "评分" },
+    "salesCount": { "bsonType": "int", "title": "销量", "defaultValue": 0, "description": "累计销量" },
+    "pushClientId": { "bsonType": "string", "title": "推送ID", "defaultValue": "" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

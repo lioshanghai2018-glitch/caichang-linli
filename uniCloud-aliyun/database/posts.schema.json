@@ -1,0 +1,19 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "userId": { "bsonType": "string", "title": "发帖人" },
+    "communityId": { "bsonType": "string", "defaultValue": "" },
+    "type": { "bsonType": "string", "defaultValue": "share", "description": "share / help / trade" },
+    "title": { "bsonType": "string" },
+    "content": { "bsonType": "string" },
+    "images": { "bsonType": "array", "defaultValue": [] },
+    "likeCount": { "bsonType": "int", "defaultValue": 0 },
+    "commentCount": { "bsonType": "int", "defaultValue": 0 },
+    "likedUserIds": { "bsonType": "array", "defaultValue": [] },
+    "status": { "bsonType": "string", "defaultValue": "active", "description": "active / closed / deleted" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "merchantId": { "bsonType": "string" },
+    "title": { "bsonType": "string", "title": "活动标题" },
+    "products": { "bsonType": "array", "title": "商品ID列表", "defaultValue": [] },
+    "discount": { "bsonType": "double", "title": "折扣", "defaultValue": 1.0 },
+    "startTime": { "bsonType": "datetime", "title": "开始时间" },
+    "endTime": { "bsonType": "datetime", "title": "结束时间" },
+    "status": { "bsonType": "string", "title": "状态", "defaultValue": "active", "description": "active / closed" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}
