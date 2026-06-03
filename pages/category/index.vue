@@ -60,8 +60,13 @@
 						<view class="product-detail">
 							<text class="product-name">{{item.name}}</text>
 							<text class="product-desc">{{item.desc}}</text>
-							<view class="product-service-tag">
-								<text>{{item.service}}</text>
+							<view class="tag-row">
+								<view class="product-service-tag">
+									<text>{{item.service}}</text>
+								</view>
+								<view class="product-stock-tag" :class="{ low: item.stock > 0 && item.stock <= 5, out: item.stock <= 0 }">
+									<text>{{item.stock > 0 ? '库存 ' + item.stock : '暂时缺货'}}</text>
+								</view>
 							</view>
 							<view class="price-row">
 								<text class="original-price">{{item.originalPrice}}</text>
@@ -72,7 +77,7 @@
 									<view class="minus-icon"></view>
 								</view>
 								<text class="quantity-num" v-if="item.quantity > 0">{{item.quantity}}</text>
-								<view class="btn-plus" @tap="increase(item)">
+								<view class="btn-plus" :class="{ disabled: item.stock <= 0 }" @tap="increase(item)">
 									<view class="add-icon"></view>
 								</view>
 							</view>
@@ -243,6 +248,13 @@
 					success: function(res) {
 						if (res.data && res.data.code === 0) {
 							self.products = res.data.data.map(function(item) {
+								// 价格：优先读 specs[0]，否则读顶层 price（兼容商家APP 单字段提交）
+								var spec = (item.specs && item.specs[0]) ? item.specs[0] : null
+								var price = spec ? Number(spec.price) : (Number(item.price) || 0)
+								var originalPrice = spec ? Number(spec.originalPrice || 0) : (Number(item.originalPrice) || 0)
+								if (!originalPrice) originalPrice = price * 1.5
+								// 库存：优先 specs[0].stock，否则顶层 stock
+								var stock = spec ? Number(spec.stock || 0) : (Number(item.stock) || 0)
 								return {
 									id: item._id,
 									name: item.name,
@@ -250,9 +262,10 @@
 									categoryName: item.categoryName || '',
 									desc: item.description || '新鲜直采·产地直发',
 									service: '当日下单·次日自提',
-									originalPrice: '¥' + ((item.specs && item.specs[0] ? item.specs[0].price : 0) * 1.5).toFixed(1),
-									currentPrice: '¥' + (item.specs && item.specs[0] ? item.specs[0].price : 0),
+									originalPrice: '¥' + originalPrice.toFixed(1),
+									currentPrice: '¥' + price.toFixed(1),
 									image: (item.images && item.images[0]) ? item.images[0] : '/static/images/placeholder.png',
+									stock: stock,
 									quantity: 0
 								};
 							});
@@ -295,6 +308,14 @@
 				this.currentPromo = e.detail.current;
 			},
 			increase: function(item) {
+				if (item.stock !== undefined && item.stock !== null && item.stock <= 0) {
+					uni.showToast({ title: '已售罄', icon: 'none' });
+					return;
+				}
+				if (item.quantity + 1 > (item.stock || 0)) {
+					uni.showToast({ title: '已达库存上限', icon: 'none' });
+					return;
+				}
 				item.quantity++;
 				this.updateCart();
 			},
@@ -623,6 +644,43 @@
 	color: #4F9A42;
 }
 
+.tag-row {
+	display: flex;
+	align-items: center;
+	gap: 8rpx;
+	margin-top: 8rpx;
+	flex-wrap: wrap;
+}
+
+.product-stock-tag {
+	display: inline-flex;
+	background-color: #FFF7E8;
+	border-radius: 4rpx;
+	padding: 2rpx 8rpx;
+}
+
+.product-stock-tag text {
+	font-size: 18rpx;
+	font-weight: 500;
+	color: #C77A1E;
+}
+
+.product-stock-tag.low {
+	background-color: #FFEBE5;
+}
+
+.product-stock-tag.low text {
+	color: #FF6B35;
+}
+
+.product-stock-tag.out {
+	background-color: #F0F0F0;
+}
+
+.product-stock-tag.out text {
+	color: #999999;
+}
+
 .price-row {
 	display: flex;
 	align-items: center;
@@ -685,6 +743,10 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
+}
+
+.btn-plus.disabled {
+	background-color: #CCCCCC;
 }
 
 .add-icon {

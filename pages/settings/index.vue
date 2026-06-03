@@ -43,6 +43,8 @@
 </template>
 
 <script>
+import { logout as doLogout } from '@/utils/auth.js'
+
 export default {
   data() {
     return {
@@ -98,8 +100,9 @@ export default {
         content: '确定退出登录？',
         success: (res) => {
           if (res.confirm) {
+            doLogout()
             uni.showToast({ title: '退出成功', icon: 'success' })
-            setTimeout(() => uni.navigateBack(), 1000)
+            setTimeout(() => uni.reLaunch({ url: '/pages/login/index' }), 600)
           }
         }
       })

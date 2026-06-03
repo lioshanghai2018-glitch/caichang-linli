@@ -296,12 +296,12 @@ export default {
         confirmText: '付款失败',
         success: (res) => {
           if (res.cancel) {
-            // 配送订单付款成功后直接设为"已接单"，触发云函数自动分配骑手
-            // 自提订单保持"已接单"（无需骑手）
-            this.doPaySuccess('已接单')
+            // 配送订单付款成功后直接设为待分拣（已接单），触发云函数自动分配骑手
+            // 自提订单保持待分拣（无需骑手）
+            this.doPaySuccess('pending_sorting')
           } else if (res.confirm) {
-            // 模拟付款失败 - 状态变为待支付
-            this.doPaySuccess('待支付')
+            // 模拟付款失败 - 状态变为待付款
+            this.doPaySuccess('pending_payment')
           }
         }
       })
@@ -324,7 +324,7 @@ export default {
       })
     },
     async doPaySuccess(orderStatus) {
-      orderStatus = orderStatus || '配送中'
+      orderStatus = orderStatus || 'delivering'
       const userId = 'user_' + (uni.getStorageSync('userId') || Date.now())
 
       // 生成完整订单号
@@ -348,6 +348,8 @@ export default {
       const cloudOrderData = {
         orderNo: fullOrderNo,
         shortOrderNo: shortOrderNo,
+        // 从商品上拿 merchantId（多商家场景下取第一个）
+        merchantId: (this.selectedProducts[0] && this.selectedProducts[0].merchantId) || 'm_test_001',
         userId: userId,
         userPhone: phone,
         products: this.selectedProducts.map(p => ({

@@ -4,3 +4,4 @@ unpackage/
 *.log
 0merchant-web/
 uniCloud-aliyun/cloudfunctions/
+.claude/settings.local.json

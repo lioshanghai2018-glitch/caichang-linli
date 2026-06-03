@@ -179,21 +179,24 @@
             data: { method: 'getFlashSale', params: {} }
           });
 
-          // 检查活动是否存在且启用
+          // getFlashSale 返回的是数组（按 startTime desc），筛选当前进行中的活动
           if (saleRes.data?.code === 0 && saleRes.data.data) {
-            const sale = saleRes.data.data;
+            const saleList = Array.isArray(saleRes.data.data) ? saleRes.data.data : [saleRes.data.data];
             const now = Date.now();
+            // 优先选进行中的（status=true && startTime<=now<endTime），否则取第一个未结束的
+            const activeSale = saleList.find(s => s.status === true && s.startTime <= now && s.endTime > now)
+              || saleList.find(s => s.status === true && s.endTime > now)
+              || null;
 
-            // 检查活动是否启用且未过期
-            if (sale.status === true && sale.endTime > now) {
-              this.flashSaleEndTime = sale.endTime;
+            if (activeSale) {
+              this.flashSaleEndTime = activeSale.endTime;
               this.startCountdown();
 
-              // 获取特惠商品列表
+              // 获取特惠商品列表（按 flashSaleId 过滤）
               const productRes = await uni.request({
                 url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSaleProducts',
                 method: 'POST',
-                data: { method: 'getFlashSaleProducts', params: { active: true } }
+                data: { method: 'getFlashSaleProducts', params: { flashSaleId: activeSale._id } }
               });
 
               if (productRes.data?.code === 0) {

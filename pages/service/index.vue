@@ -5,108 +5,199 @@
       <view class="back-btn" @tap="goBack">
         <text class="back-arrow">‹</text>
       </view>
-      <text class="nav-title">客服中心</text>
+      <text class="nav-title">在线客服</text>
     </view>
 
-    <!-- 联系客服 -->
-    <view class="card">
-      <view class="service-header">
-        <text class="service-title">联系我们</text>
-        <text class="service-subtitle">随时为您服务</text>
-      </view>
-      <view class="service-btns">
-        <view class="service-btn" @tap="makePhoneCall">
-          <view class="iconfont icon-dianhua service-icon"></view>
-          <text class="btn-text">拨打电话</text>
+    <!-- 聊天区域 -->
+    <scroll-view class="chat-scroll" scroll-y="true" :scroll-top="scrollTop">
+      <view class="chat-list">
+        <view class="chat-item" :class="{ 'from-me': msg.senderType === 'user' }" v-for="(msg, idx) in messages" :key="idx">
+          <view class="avatar" v-if="msg.senderType !== 'user'">
+            <text class="avatar-text">店</text>
+          </view>
+          <view class="message-bubble">
+            <text class="message-text">{{ msg.content }}</text>
+            <text class="message-time">{{ formatTime(msg.createTime) }}</text>
+          </view>
         </view>
-        <view class="service-btn" @tap="goOnlineService">
-          <view class="iconfont icon-kefuzhongxin service-icon"></view>
-          <text class="btn-text">在线客服</text>
+        <view class="empty-chat" v-if="messages.length === 0">
+          <text>暂无消息，开始对话吧~</text>
         </view>
       </view>
-      <view class="service-time">
-        <text class="time-label">服务时间</text>
-        <text class="time-value">周一至周日 08:00-22:00</text>
-      </view>
-    </view>
+    </scroll-view>
 
-    <!-- 常见问题 -->
-    <view class="card">
-      <text class="card-title">常见问题</text>
-      <view class="faq-list">
-        <view class="faq-item" v-for="(item, index) in faqList" :key="index">
-          <view class="faq-question" @tap="toggleFaq(index)">
-            <text class="faq-q-text">{{ item.question }}</text>
-            <view class="faq-arrow" :class="{ open: item.expanded }">›</view>
-          </view>
-          <view class="faq-answer" v-if="item.expanded">
-            <text>{{ item.answer }}</text>
-          </view>
-        </view>
+    <!-- 输入区域 -->
+    <view class="input-area">
+      <input class="input-field" v-model="inputText" placeholder="输入消息..." @confirm="sendMsg" />
+      <view class="send-btn" @tap="sendMsg">
+        <text class="send-text">发送</text>
       </view>
     </view>
   </view>
 </template>
 
 <script>
+import { createConversation, getMessages, sendMessage, markAsRead } from '@/utils/order-api'
+
 export default {
   data() {
     return {
-      faqList: [
-        { question: '如何修改收货地址？', answer: '进入"我的-收货地址"页面，点击右上角"新增地址"即可添加，或点击已有地址进行编辑修改。', expanded: false },
-        { question: '如何申请退款？', answer: '订单未发货前，可在订单详情页申请退款；如已发货，请联系客服处理。退款会在1-3个工作日内退回原支付账户。', expanded: false },
-        { question: '自提点和配送范围？', answer: '目前支持阳光小区、四季花城、幸福里、锦绣花园、金地名郡等小区自提，配送范围以页面显示为准。', expanded: false },
-        { question: '如何成为会员？', answer: '购物即可自动成为会员，累计成长值可升级会员等级，享受更多专属优惠。', expanded: false },
-        { question: '优惠券如何使用？', answer: '结算时选择可用优惠券，系统会自动抵扣。每笔订单仅限使用一张优惠券。', expanded: false },
-        { question: '订单如何查看？', answer: '进入"订单"页面可查看当前订单和历史订单，点击订单卡片可查看详情。', expanded: false }
-      ]
+      userId: '',
+      userName: '',
+      conversationId: '',
+      messages: [],
+      inputText: '',
+      scrollTop: 9999,
+      pollingTimer: null,
+      lastTimestamp: 0,
+      inited: false
     }
   },
-  methods: {
-    goBack() { uni.navigateBack() },
-    makePhoneCall() {
-      uni.makePhoneCall({ phoneNumber: '400-800-1234', fail: () => uni.showToast({ title: '客服功能开发中', icon: 'none' }) })
-    },
-    goOnlineService() {
-      uni.showToast({ title: '在线客服开发中', icon: 'none' })
-    },
-    toggleFaq(index) {
-      this.faqList[index].expanded = !this.faqList[index].expanded
+  onLoad() {
+    const userInfo = uni.getStorageSync('userInfo') || {}
+    this.userId = userInfo.userId || 'guest_' + Date.now()
+    this.userName = userInfo.nickname || userInfo.userName || '用户'
+    this.initConversation()
+  },
+  onShow() {
+    if (this.inited) {
+      this.startPolling()
     }
+  },
+  onHide() {
+    this.stopPolling()
+  },
+  onUnload() {
+    this.stopPolling()
+  },
+  methods: {
+    async initConversation() {
+      console.log('开始初始化会话, userId:', this.userId, 'userName:', this.userName)
+      try {
+        const res = await createConversation({
+          merchantId: 'default',
+          userId: this.userId,
+          userName: this.userName
+        })
+        console.log('createConversation 返回:', res)
+        if (res && res.data) {
+          this.conversationId = res.data._id
+          console.log('会话ID:', this.conversationId)
+          this.inited = true
+          this.loadMessages()
+          this.startPolling()
+        } else {
+          console.log('createConversation 返回数据为空')
+        }
+      } catch (e) {
+        console.error('初始化会话失败', e)
+      }
+    },
+    async loadMessages() {
+      if (!this.conversationId) return
+      try {
+        const res = await getMessages({ conversationId: this.conversationId })
+        this.messages = res.data || []
+        if (this.messages.length > 0) {
+          this.lastTimestamp = this.messages[this.messages.length - 1].createTime
+          this.scrollToBottom()
+        }
+      } catch (e) {
+        console.error('加载消息失败', e)
+      }
+    },
+    async sendMsg() {
+      if (!this.inputText.trim()) return
+      if (!this.conversationId) {
+        uni.showToast({ title: '会话未初始化', icon: 'none' })
+        return
+      }
+
+      const content = this.inputText.trim()
+      this.inputText = ''
+
+      try {
+        await sendMessage({
+          conversationId: this.conversationId,
+          senderId: this.userId,
+          senderType: 'user',
+          senderName: this.userName,
+          content: content
+        })
+        await this.loadMessages()
+      } catch (e) {
+        console.error('发送消息失败', e)
+        uni.showToast({ title: '发送失败', icon: 'none' })
+      }
+    },
+    async pollMessages() {
+      if (!this.conversationId || !this.lastTimestamp) return
+      try {
+        const res = await getMessages({
+          conversationId: this.conversationId,
+          lastTimestamp: this.lastTimestamp
+        })
+        if (res.data && res.data.length > 0) {
+          this.messages = [...this.messages, ...res.data]
+          this.lastTimestamp = this.messages[this.messages.length - 1].createTime
+          this.scrollToBottom()
+        }
+      } catch (e) {
+        // 忽略轮询错误
+      }
+    },
+    startPolling() {
+      this.pollingTimer = setInterval(() => {
+        this.pollMessages()
+      }, 3000)
+    },
+    stopPolling() {
+      if (this.pollingTimer) {
+        clearInterval(this.pollingTimer)
+        this.pollingTimer = null
+      }
+    },
+    scrollToBottom() {
+      this.$nextTick(() => {
+        this.scrollTop = 9999
+      })
+    },
+    formatTime(timestamp) {
+      if (!timestamp) return ''
+      const date = new Date(timestamp)
+      return `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
+    },
+    goBack() { uni.navigateBack() }
   }
 }
 </script>
 
 <style>
-.page { min-height: 100vh; background-color: #F5F1EB; padding-bottom: 40rpx; }
-.nav-bar { display: flex; align-items: center; height: 88rpx; background-color: #FFFFFF; padding: 0 24rpx; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
+.page { min-height: 100vh; background-color: #FFFFFF; display: flex; flex-direction: column; }
+.nav-bar { display: flex; align-items: center; height: 88rpx; background-color: #FFFFFF; padding: 0 24rpx; position: fixed; top: 0; left: 0; right: 0; z-index: 100; box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06); }
 .back-btn { width: 56rpx; height: 56rpx; display: flex; align-items: center; justify-content: center; }
 .back-arrow { font-size: 44rpx; color: #333; font-weight: 300; }
 .nav-title { flex: 1; font-size: 32rpx; font-weight: 600; color: #333; text-align: center; }
 
-.card { background-color: #FFFFFF; margin: 16rpx 20rpx; border-radius: 16rpx; padding: 24rpx; }
+.chat-scroll { flex: 1; padding: 108rpx 24rpx 120rpx 24rpx; box-sizing: border-box; width: 100%; background-color: #F5F1EB; }
+.chat-list { display: flex; flex-direction: column; gap: 32rpx; padding: 24rpx 0; }
+.chat-item { display: flex; align-items: flex-end; gap: 16rpx; width: 100%; box-sizing: border-box; }
+.chat-item.from-me { justify-content: flex-end; }
 
-.service-header { text-align: center; margin-bottom: 32rpx; }
-.service-title { font-size: 32rpx; font-weight: 600; color: #333; display: block; }
-.service-subtitle { font-size: 24rpx; color: #999; margin-top: 8rpx; display: block; }
+.avatar { width: 80rpx; height: 80rpx; border-radius: 50%; background-color: #E8F5E9; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.avatar-text { font-size: 32rpx; color: #4F9A42; font-weight: 600; }
 
-.service-btns { display: flex; justify-content: center; gap: 48rpx; margin-bottom: 32rpx; }
-.service-btn { display: flex; flex-direction: column; align-items: center; }
-.service-icon { font-size: 64rpx; color: #4F9A42; }
-.btn-text { font-size: 26rpx; color: #333; margin-top: 12rpx; }
+.message-bubble { max-width: 70%; background-color: #FFFFFF; border-radius: 16rpx; padding: 20rpx 24rpx; display: flex; flex-direction: column; word-break: break-all; box-sizing: border-box; box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06); }
+.from-me .message-bubble { background-color: #4F9A42; }
+.message-text { font-size: 28rpx; color: #333; line-height: 1.6; word-break: break-word; }
+.from-me .message-text { color: #FFFFFF; }
+.message-time { font-size: 20rpx; color: #999999; margin-top: 8rpx; align-self: flex-end; }
+.from-me .message-time { color: rgba(255,255,255,0.7); }
 
-.service-time { display: flex; justify-content: center; align-items: center; padding-top: 16rpx; border-top: 1rpx solid #F0F0F0; }
-.time-label { font-size: 24rpx; color: #999; }
-.time-value { font-size: 24rpx; color: #333; margin-left: 12rpx; }
+.empty-chat { text-align: center; padding: 100rpx 0; color: #999; font-size: 28rpx; }
 
-.card-title { font-size: 28rpx; font-weight: 600; color: #333; display: block; margin-bottom: 16rpx; }
-.faq-list { }
-.faq-item { border-bottom: 1rpx solid #F0F0F0; }
-.faq-item:last-child { border-bottom: none; }
-.faq-question { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 0; }
-.faq-q-text { font-size: 26rpx; color: #333; flex: 1; }
-.faq-arrow { font-size: 32rpx; color: #CCC; transition: transform 0.2s; }
-.faq-arrow.open { transform: rotate(90deg); }
-.faq-answer { padding: 0 0 20rpx 0; }
-.faq-answer text { font-size: 24rpx; color: #666; line-height: 1.6; }
+.input-area { position: fixed; bottom: 0; left: 0; right: 0; background-color: #FFFFFF; padding: 20rpx 24rpx; display: flex; align-items: center; gap: 16rpx; border-top: 1rpx solid #E0E0E0; }
+.input-field { flex: 1; height: 80rpx; background-color: #F5F5F5; border-radius: 40rpx; padding: 0 32rpx; font-size: 28rpx; }
+.send-btn { width: 140rpx; height: 80rpx; background-color: #4F9A42; border-radius: 40rpx; display: flex; align-items: center; justify-content: center; }
+.send-text { font-size: 28rpx; color: #FFF; font-weight: 600; }
 </style>

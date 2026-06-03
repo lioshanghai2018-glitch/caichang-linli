@@ -38,3 +38,10 @@ export const updateMyOrderStatus = (orderId, status) => {
 export const applyMyRefund = (orderId, reason) => {
   return request('applyRefund', { id: orderId, reason })
 }
+
+// ========== 即时通讯 ==========
+export const createConversation = (data) => request('createConversation', data)
+export const getConversations = (params) => request('getConversations', params)
+export const getMessages = (params) => request('getMessages', params)
+export const sendMessage = (data) => request('sendMessage', data)
+export const markAsRead = (params) => request('markAsRead', params)

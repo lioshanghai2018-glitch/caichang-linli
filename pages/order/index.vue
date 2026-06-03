@@ -31,7 +31,7 @@
 			<view class="order-card" v-for="order in currentOrders" :key="order._id || order.id" @tap="toggleDetail(order)">
 				<!-- 卡片头部 -->
 				<view class="order-header">
-					<text class="order-id">订单号：{{(order.orderNo || order.shortOrderNo || order.shortId || order.id).slice(-5)}}</text>
+					<text class="order-id">订单号：{{getOrderIdTail(order)}}</text>
 					<view class="order-status-tag">
 						<text>{{getStepLabel(order)}}</text>
 					</view>
@@ -62,7 +62,7 @@
 				</view>
 
 				<!-- 商品列表 -->
-				<view class="product-row" v-for="(product, pIdx) in order.products" :key="pIdx">
+				<view class="product-row" v-for="(product, pIdx) in order.items" :key="pIdx">
 					<image class="product-thumb" :src="product.image" mode="aspectFill"></image>
 					<view class="product-info">
 						<text class="product-name">{{product.name}}</text>
@@ -117,7 +117,7 @@
 				<!-- 底部：总价 + 按钮 -->
 				<view class="order-footer">
 					<text class="total-text">实付 <text class="total-price">¥{{order.total || order.totalAmount}}</text></text>
-					<view class="footer-btns" v-if="order.status === '待支付' || order.status === 'pending'">
+					<view class="footer-btns" v-if="isPendingStatus(order)">
 						<view class="action-btn" @tap="goPay(order)"><text>去付款</text></view>
 						<view class="action-btn cancel" @tap="cancelOrder(order)"><text>取消订单</text></view>
 					</view>
@@ -134,7 +134,7 @@
 				<!-- 卡片头部 -->
 				<view class="order-header">
 					<view class="order-header-left">
-						<text class="order-id">订单号：{{(order.orderNo || order.shortOrderNo || order.shortId || order.id).slice(-5)}}</text>
+						<text class="order-id">订单号：{{getOrderIdTail(order)}}</text>
 						<view class="order-status" :class="getHistoryStatusClass(order)">
 							<text>{{getHistoryStatusLabel(order)}}</text>
 						</view>
@@ -145,7 +145,7 @@
 				</view>
 
 				<!-- 商品列表 -->
-				<view class="product-row" v-for="(product, pIdx) in order.products" :key="pIdx">
+				<view class="product-row" v-for="(product, pIdx) in order.items" :key="pIdx">
 					<image class="product-thumb" :src="product.image" mode="aspectFill"></image>
 					<view class="product-info">
 						<text class="product-name">{{product.name}}</text>
@@ -211,6 +211,47 @@
 </template>
 
 <script>
+import { ORDER_STATUS, ORDER_STATUS_TEXT } from '@/utils/config.js'
+
+// 旧数据兼容：把历史写入的中文/旧英文 status 归一为新枚举
+const LEGACY_TO_CANONICAL = {
+  'pending': ORDER_STATUS.PENDING_PAYMENT,
+  '待支付': ORDER_STATUS.PENDING_PAYMENT,
+  'confirmed': ORDER_STATUS.PAID,
+  '已接单': ORDER_STATUS.PAID,
+  'sorting': ORDER_STATUS.SORTING,
+  '配送中': ORDER_STATUS.DELIVERING,
+  '已完成': ORDER_STATUS.COMPLETED,
+  '已取消': ORDER_STATUS.CANCELLED,
+  '已退款': ORDER_STATUS.REFUNDED
+}
+
+function toCanonical(s) {
+  if (!s) return s
+  return LEGACY_TO_CANONICAL[s] || s
+}
+
+// 进行中：未结束
+const ACTIVE_STATUSES = [
+  ORDER_STATUS.PENDING_PAYMENT,
+  ORDER_STATUS.PAID,
+  ORDER_STATUS.PENDING_SORTING,
+  ORDER_STATUS.SORTING,
+  ORDER_STATUS.DELIVERING,
+  'pending', 'confirmed', '待支付', '已接单', '配送中'
+]
+
+// 已结束
+const HISTORY_STATUSES = [
+  ORDER_STATUS.COMPLETED,
+  ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.REFUNDED,
+  '已完成', '已取消', '已退款'
+]
+
+// deliveryStatus 进行中子集
+const ACTIVE_DELIVERY = ['accepted', 'picked_up', 'delivering']
+
 export default {
 	data() {
 		return {
@@ -229,8 +270,22 @@ export default {
 			uni.setStorageSync('userId', this.userId.replace('user_', ''))
 		}
 		this.syncOrders()
+		this.startPolling()
+	},
+	onUnload() {
+		this.stopPolling()
 	},
 	methods: {
+		startPolling() {
+			this.stopPolling()
+			this._pollTimer = setInterval(() => this.syncOrders(), 8000)
+		},
+		stopPolling() {
+			if (this._pollTimer) {
+				clearInterval(this._pollTimer)
+				this._pollTimer = null
+			}
+		},
 		// 调用云端API
 		callAPI(method, params) {
 			return new Promise((resolve, reject) => {
@@ -257,12 +312,10 @@ export default {
 				console.log('订单列表:', list)
 				// 按状态分类（包含 deliveryStatus 判断）
 				this.currentOrders = list.filter(o => {
-					// 使用 deliveryStatus 判断
-					if (['accepted', 'delivering'].includes(o.deliveryStatus)) return true
-					// 兼容原有 status
-					return ['pending', 'confirmed', 'delivering', '待支付', '已接单', '配送中'].includes(o.status)
+					if (ACTIVE_DELIVERY.includes(o.deliveryStatus)) return true
+					return ACTIVE_STATUSES.includes(toCanonical(o.status))
 				})
-				this.historyOrders = list.filter(o => ['completed', 'cancelled', 'refunded', '已完成', '已取消', '已退款'].includes(o.status))
+				this.historyOrders = list.filter(o => HISTORY_STATUSES.includes(toCanonical(o.status)))
 			} catch (e) {
 				console.error('获取订单失败:', e)
 				// 失败时尝试从本地存储读取
@@ -291,8 +344,8 @@ export default {
 				if (data) {
 					const list = JSON.parse(data)
 					if (Array.isArray(list) && list.length > 0) {
-						this.currentOrders = list.filter(o => o.status === '配送中' || o.status === '待支付' || o.status === 'pending')
-						this.historyOrders = list.filter(o => o.status === '已完成' || o.status === '已取消')
+						this.currentOrders = list.filter(o => ACTIVE_STATUSES.includes(toCanonical(o.status)) || ACTIVE_DELIVERY.includes(o.deliveryStatus))
+						this.historyOrders = list.filter(o => HISTORY_STATUSES.includes(toCanonical(o.status)))
 					}
 				}
 			} catch (e) {}
@@ -314,6 +367,10 @@ export default {
 		goPay(order) {
 			uni.showToast({ title: '去付款功能开发中', icon: 'none' })
 		},
+		getOrderIdTail(order) {
+			const id = order.orderNo || order.shortOrderNo || order.shortId || order.id || order._id || ''
+			return String(id).slice(-5) || '-----'
+		},
 		async cancelOrder(order) {
 			uni.showModal({
 				title: '确认取消',
@@ -322,7 +379,7 @@ export default {
 					if (res.confirm) {
 						try {
 							// 调用云端API取消订单
-							await this.callAPI('updateOrderStatus', { id: order._id, status: 'cancelled' })
+							await this.callAPI('updateOrderStatus', { orderNo: order.orderNo, status: 'cancelled' })
 							uni.showToast({ title: '订单已取消', icon: 'success' })
 						} catch (e) {
 							console.error('云端取消失败:', e)
@@ -344,7 +401,7 @@ export default {
 					if (res.confirm) {
 						try {
 							const reason = res.content || '用户申请退款'
-							await this.callAPI('applyRefund', { id: order._id, reason })
+							await this.callAPI('applyRefund', { orderNo: order.orderNo, reason })
 							uni.showToast({ title: '退款申请已提交', icon: 'success' })
 							this.syncOrders()
 						} catch (e) {
@@ -359,56 +416,40 @@ export default {
 			uni.showToast({ title: '再来一单功能开发中', icon: 'none' })
 		},
 		isPendingStatus(order) {
-			return ['pending', '待支付'].includes(order.status)
+			return toCanonical(order.status) === ORDER_STATUS.PENDING_PAYMENT
 		},
 		getStepIndex(order) {
-			// 优先使用 deliveryStatus（骑手端配送状态）
-			if (order.deliveryStatus === 'accepted') return 1 // 待取货 → 分拣中
-			if (order.deliveryStatus === 'delivering') return 2 // 配送中
-			if (order.deliveryStatus === 'completed') return 3 // 已完成
+			if (order.deliveryStatus === 'accepted' || order.deliveryStatus === 'picked_up') return 1
+			if (order.deliveryStatus === 'delivering') return 2
+			if (order.deliveryStatus === 'completed') return 3
 
-			// 兼容原有 status 逻辑
+			const s = toCanonical(order.status)
 			const map = {
-				'pending': 0, '待支付': 0,
-				'confirmed': 1, '已接单': 1,
-				'delivering': 2, '配送中': 2,
-				'completed': 3, '已完成': 3,
-				'cancelled': -1, '已取消': -1
+				[ORDER_STATUS.PENDING_PAYMENT]: 0,
+				[ORDER_STATUS.PAID]: 1,
+				[ORDER_STATUS.PENDING_SORTING]: 1,
+				[ORDER_STATUS.SORTING]: 1,
+				[ORDER_STATUS.DELIVERING]: 2,
+				[ORDER_STATUS.COMPLETED]: 3,
+				[ORDER_STATUS.CANCELLED]: -1,
+				[ORDER_STATUS.REFUNDED]: -1
 			}
-			return map[order.status] ?? 0
+			return map[s] ?? 0
 		},
 		getStepLabel(order) {
-			// 优先使用 deliveryStatus
-			if (order.deliveryStatus === 'accepted') return '分拣中'
-			if (order.deliveryStatus === 'delivering') return '配送中'
-			if (order.deliveryStatus === 'completed') return '已完成'
-
-			// 兼容原有 status
-			const map = {
-				'pending': '待付款', '待支付': '待付款',
-				'confirmed': '分拣中', '已接单': '分拣中',
-				'delivering': '配送中', '配送中': '配送中',
-				'completed': '已完成', '已完成': '已完成',
-				'cancelled': '已取消', '已取消': '已取消'
-			}
-			return map[order.status] || '处理中'
+			if (order.deliveryStatus === 'accepted' || order.deliveryStatus === 'picked_up') return '分拣中'
+			if (order.deliveryStatus === 'delivering') return ORDER_STATUS_TEXT.delivering
+			if (order.deliveryStatus === 'completed') return ORDER_STATUS_TEXT.completed
+			return ORDER_STATUS_TEXT[toCanonical(order.status)] || '处理中'
 		},
-		// 判断第一步是否active（待付款或已下单都算）
 		isFirstStepActive(order) {
-			return true // 第一步永远绿色
+			return true
 		},
 		getHistoryStatusLabel(order) {
-			const map = {
-				'completed': '已完成', '已完成': '已完成',
-				'cancelled': '已取消', '已取消': '已取消',
-				'refunded': '已退款', '已退款': '已退款'
-			}
-			return map[order.status] || order.status
+			return ORDER_STATUS_TEXT[toCanonical(order.status)] || order.status
 		},
 		getHistoryStatusClass(order) {
-			if (['completed', '已完成'].includes(order.status)) {
-				return 'done'
-			}
+			if (toCanonical(order.status) === ORDER_STATUS.COMPLETED) return 'done'
 			return 'cancelled'
 		},
 		deleteOrder(order) {
@@ -418,7 +459,7 @@ export default {
 				success: async (res) => {
 					if (res.confirm) {
 						try {
-							await this.callAPI('deleteOrder', { id: order._id })
+							await this.callAPI('deleteOrder', { orderNo: order.orderNo })
 						} catch (e) {
 							console.error('删除失败:', e)
 						}

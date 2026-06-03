@@ -1,0 +1,59 @@
+// 4端统一 baseURL（注意：当前 uniCloud 空间 fc-mp- 老格式可用，新格式 mp- 暂未生效，临时用老格式）
+const BASE_URL = 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com'
+const CLOUD_OBJECT = '/merchant-api'
+const API_BASE = BASE_URL + CLOUD_OBJECT
+
+const ORDER_STATUS = {
+  PENDING_PAYMENT: 'pending_payment',
+  PAID: 'paid',
+  PENDING_SORTING: 'pending_sorting',
+  SORTING: 'sorting',
+  DELIVERING: 'delivering',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
+  REFUNDING: 'refunding',
+  REFUNDED: 'refunded'
+}
+
+const PRODUCT_STATUS = {
+  ONLINE: 'online',
+  OFFLINE: 'offline',
+  SOLD_OUT: 'sold_out'
+}
+
+const ORDER_STATUS_TEXT = {
+  pending_payment: '待付款',
+  paid: '已付款',
+  pending_sorting: '待分拣',
+  sorting: '分拣中',
+  delivering: '配送中',
+  completed: '已完成',
+  cancelled: '已取消',
+  refunding: '退款中',
+  refunded: '已退款'
+}
+
+const POLL_INTERVAL = {
+  ORDER_DETAIL: 8000,
+  CART_REFRESH: 15000
+}
+
+const STORAGE_KEYS = {
+  TOKEN: 'uni_id_token',
+  TOKEN_EXPIRED: 'uni_id_token_expired',
+  USER_INFO: 'user_info',
+  USER_ID: 'user_id',
+  CART: 'cart_items',
+  ADDRESS_SELECTED: 'selected_address_id'
+}
+
+export {
+  BASE_URL,
+  CLOUD_OBJECT,
+  API_BASE,
+  ORDER_STATUS,
+  PRODUCT_STATUS,
+  ORDER_STATUS_TEXT,
+  POLL_INTERVAL,
+  STORAGE_KEYS
+}

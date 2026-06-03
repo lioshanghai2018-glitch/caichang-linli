@@ -1,10 +1,25 @@
 <script>
+	import { isLoggedIn } from './utils/auth.js'
+	import { initPush, onPushMessage } from './utils/push.js'
+
+	const WHITE_LIST = ['pages/login/index', 'pages/index/index', 'pages/category/index', 'pages/product/list']
+
 	export default {
 		onLaunch: function() {
 			console.log('App Launch')
+			initPush()
+			onPushMessage(() => {})
 		},
 		onShow: function() {
 			console.log('App Show')
+			const pages = getCurrentPages()
+			if (!pages.length) return
+			const current = pages[pages.length - 1]
+			const path = current.route || current.$page?.fullPath || ''
+			const isWhite = WHITE_LIST.some(p => path.includes(p))
+			if (!isLoggedIn() && !isWhite) {
+				uni.reLaunch({ url: '/pages/login/index' })
+			}
 		},
 		onHide: function() {
 			console.log('App Hide')
