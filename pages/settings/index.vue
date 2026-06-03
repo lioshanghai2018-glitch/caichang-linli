@@ -79,7 +79,7 @@ export default {
     },
     calculateCache() {
       try {
-        const keys = ['cartItems', 'user_addresses', 'order_list', 'checkoutItems']
+        const keys = ['cartItems', 'user_addresses']
         let total = 0
         keys.forEach(key => {
           const data = uni.getStorageSync(key)

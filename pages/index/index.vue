@@ -2,7 +2,7 @@
   <view class="container">
     <!-- IP形象区域 -->
     <view class="ip-section">
-      <image class="ip-image" src="/static/images/萝卜仔.png" mode="aspectFill"></image>
+      <image class="ip-image" src="/static/images/萝卜仔.webp" mode="aspectFill"></image>
     </view>
 
     <!-- 卡片1：问候 + 买菜邻里 -->
@@ -71,10 +71,10 @@
       <view class="group-section">
         <swiper class="group-swiper" circular="true" @change="onSwiperChange">
           <swiper-item>
-            <image class="group-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+            <image class="group-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
           </swiper-item>
           <swiper-item>
-            <image class="group-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+            <image class="group-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
           </swiper-item>
         </swiper>
         <view class="swiper-indicators">
@@ -320,11 +320,11 @@
       },
 
       onShopNow() {
-        console.log('立即选购');
+        uni.navigateTo({ url: '/pages/category/index' })
       },
 
       onViewMore() {
-        console.log('查看更多');
+        uni.navigateTo({ url: '/pages/category/index' })
       },
 
       goMine() {

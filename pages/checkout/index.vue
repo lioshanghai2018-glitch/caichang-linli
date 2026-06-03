@@ -145,14 +145,15 @@
         <text class="bottom-price">¥{{ totalPayable }}</text>
       </view>
       <view class="pay-btn" @tap="handlePay">
-        <text class="pay-text">付款</text>
+        <text class="pay-text">测试付款（待开通）</text>
       </view>
     </view>
   </view>
 </template>
 
 <script>
-import { addOrder } from '@/utils/order.js'
+import { STORAGE_KEYS } from '@/utils/config.js'
+import { request } from '@/utils/request.js'
 export default {
   data() {
     return {
@@ -290,42 +291,26 @@ export default {
         return
       }
       uni.showModal({
-        title: '选择付款结果',
-        content: '请选择模拟付款状态',
-        cancelText: '付款成功',
-        confirmText: '付款失败',
+        title: '测试付款确认',
+        content: '当前为测试模式，微信支付尚未开通。点击"测试成功"将模拟创建已支付订单。',
+        cancelText: '测试失败',
+        confirmText: '测试成功',
         success: (res) => {
-          if (res.cancel) {
-            // 配送订单付款成功后直接设为待分拣（已接单），触发云函数自动分配骑手
-            // 自提订单保持待分拣（无需骑手）
+          if (res.confirm) {
+            // 测试模式：模拟付款成功
             this.doPaySuccess('pending_sorting')
-          } else if (res.confirm) {
-            // 模拟付款失败 - 状态变为待付款
+          } else if (res.cancel) {
+            // 测试模式：模拟付款失败
             this.doPaySuccess('pending_payment')
           }
         }
       })
     },
     callAPI(method, params) {
-      return new Promise((resolve, reject) => {
-        uni.request({
-          url: `https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/${method}`,
-          method: 'POST',
-          data: { method, params },
-          success: (res) => {
-            if (res.data && res.data.code === 0) {
-              resolve(res.data)
-            } else {
-              reject(res.data || { error: '请求失败' })
-            }
-          },
-          fail: (err) => reject(err)
-        })
-      })
+      return request(method, params)
     },
     async doPaySuccess(orderStatus) {
-      orderStatus = orderStatus || 'delivering'
-      const userId = 'user_' + (uni.getStorageSync('userId') || Date.now())
+      orderStatus = orderStatus || 'pending_sorting'
 
       // 生成完整订单号
       // 格式：A1 + 年月日时分(10位) + 手机尾号(4位) + 随机码(4位) = 20位
@@ -335,48 +320,47 @@ export default {
       const da = String(now.getDate()).padStart(2, '0')
       const h = now.getHours()
       const mi = String(now.getMinutes()).padStart(2, '0')
-      const s = String(now.getSeconds()).padStart(2, '0')
-      const timeStr = `${y}${mo}${da}${h}${mi}${s}` // 10位时间
+      const timeStr = `${y}${mo}${da}${h}${mi}` // 10位时间
       const phone = this.selectedAddress?.phone || ''
-      const phoneTail = phone.slice(-4) || '0000' // 手机尾号4位
-      const random = String(Math.floor(Math.random() * 10000)).padStart(4, '0') // 随机4位
-      const fullOrderNo = `A1${timeStr}${phoneTail}${random}` // 20位完整订单号
-      // 简化订单号用于显示（去掉A1和手机尾号）
+      const phoneTail = phone.slice(-4) || '0000'
+      const random = String(Math.floor(Math.random() * 10000)).padStart(4, '0')
+      const fullOrderNo = `A1${timeStr}${phoneTail}${random}`
       const shortOrderNo = `${timeStr}${random}`
 
-      // 构建云端订单数据
+      // 构建云端订单数据：传商品价格 + ID（测试模式：客户端定价；上线后建议云端从 products 表重算）
+      const orderItems = this.selectedProducts.map(p => ({
+        productId: p.productId || p.id || null,
+        name: p.name,
+        spec: p.spec,
+        qty: p.qty || 1,
+        image: p.image || '',
+        price: parseFloat(p.currentPrice) || 0  // TODO 上线后由云端从 products 集合重算
+      })).concat(
+        this.addOnProducts.filter(a => a.checked).map(a => ({
+          productId: a.productId || a.id || null,
+          name: a.name,
+          spec: a.spec,
+          qty: 1,
+          image: a.image || '',
+          price: parseFloat(a.currentPrice) || 0
+        }))
+      )
+
       const cloudOrderData = {
         orderNo: fullOrderNo,
         shortOrderNo: shortOrderNo,
-        // 从商品上拿 merchantId（多商家场景下取第一个）
         merchantId: (this.selectedProducts[0] && this.selectedProducts[0].merchantId) || 'm_test_001',
-        userId: userId,
+        // userId 不传，云端从 token 解析
         userPhone: phone,
-        products: this.selectedProducts.map(p => ({
-          name: p.name,
-          spec: p.spec,
-          price: parseFloat(p.currentPrice) || 0,
-          qty: p.qty || 1,
-          image: p.image || ''
-        })).concat(
-          this.addOnProducts.filter(a => a.checked).map(a => ({
-            name: a.name,
-            spec: a.spec,
-            price: parseFloat(a.currentPrice) || 0,
-            qty: 1,
-            image: a.image || ''
-          }))
-        ),
-        totalAmount: parseFloat(this.totalPayable) || 0,
+        items: orderItems,  // 含 price（云端会按 price × qty 累加成 totalAmount）
+        // totalAmount 不传，由云端累加计算（兜底用本地总额）
         status: orderStatus,
         remark: this.remark || '',
         deliveryTime: this.selectedTime,
         deliveryType: this.deliveryType,
         timeType: this.timeType,
-        payMethod: '微信支付',
-        packFee: '¥0',
-        deliveryFee: this.deliveryType === 'self' ? '¥0' : ('¥' + this.computedDeliveryFee),
-        coupon: '¥0',
+        payMethod: '微信支付（测试）',
+        deliveryFee: this.deliveryType === 'self' ? 0 : parseFloat(this.computedDeliveryFee),
         orderTime: (() => {
           const amp = h < 12 ? '上午' : '下午'
           const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h)
@@ -390,71 +374,31 @@ export default {
         }
       }
 
-      // 保存云端订单ID
-      let cloudOrderId = null
+      // 调用云端 API 创建订单
       try {
-        // 调用云端API创建订单
-        const res = await this.callAPI('createOrder', cloudOrderData)
-        console.log('云端订单创建成功:', res)
-        if (res && res.data && res.data.id) {
-          cloudOrderId = res.data.id
-        }
+        await this.callAPI('createOrder', cloudOrderData)
+        // #ifdef H5
+        console.log('[dev] 云端订单创建成功')
+        // #endif
       } catch (e) {
-        console.error('云端订单创建失败，使用本地存储:', e)
+        // #ifdef H5
+        console.error('[dev] 云端订单创建失败:', e)
+        // #endif
+        uni.showModal({
+          title: '订单创建失败',
+          content: (e && (e.msg || e.message)) || '网络异常，请重试',
+          showCancel: false,
+          confirmText: '我知道了'
+        })
+        return
       }
 
-      // 继续本地流程
-      const newOrder = {
-        id: fullOrderNo,
-        shortId: shortOrderNo,
-        fullId: cloudOrderId || fullOrderNo,
-        _id: cloudOrderId,
-        status: orderStatus,
-        deliveryTime: this.selectedTime,
-        deliveryType: this.deliveryType,
-        timeType: this.timeType,
-        payMethod: '微信支付',
-        packFee: '¥0.00',
-        deliveryFee: this.deliveryType === 'self' ? '¥0.00' : ('¥' + this.computedDeliveryFee),
-        coupon: '¥0',
-        orderTime: (() => {
-          const amp = h < 12 ? '上午' : '下午'
-          const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h)
-          return `${y}.${mo}.${da}${amp}${h12}:${mi}`
-        })(),
-        address: this.selectedAddress ? {
-          name: this.selectedAddress.name || '邻居',
-          phone: this.selectedAddress.phone || '',
-          address: this.selectedAddress.address || '',
-          doorNo: this.selectedAddress.doorNo || ''
-        } : { name: '邻居', phone: '', address: '', doorNo: '' },
-        remark: this.remark || '',
-        total: this.totalPayable,
-        actionBtn: '查看详情',
-        expanded: false,
-        products: this.selectedProducts.map(p => ({
-          name: p.name,
-          spec: p.spec,
-          price: p.currentPrice,
-          qty: p.qty,
-          image: p.image,
-          originalPrice: p.originalPrice !== p.currentPrice ? p.originalPrice : undefined
-        })).concat(
-          this.addOnProducts.filter(a => a.checked).map(a => ({
-            name: a.name,
-            spec: a.spec,
-            price: a.currentPrice,
-            qty: 1,
-            image: a.image,
-            originalPrice: a.originalPrice !== a.currentPrice ? a.originalPrice : undefined
-          }))
-        )
-      }
-      addOrder(newOrder)
-      // 清空购物车和结算项
+      // 缓存用户手机号（订单页查询用；删掉本地订单存储后这是唯一持久化的身份键）
+      if (phone) uni.setStorageSync(STORAGE_KEYS.USER_PHONE, phone)
+
       uni.removeStorageSync('cartItems')
       uni.removeStorageSync('checkoutItems')
-      const successMsg = orderStatus === '待支付' ? '订单待支付' : '付款成功'
+      const successMsg = orderStatus === 'pending_payment' ? '已创建待支付订单' : '测试付款成功'
       uni.showToast({ title: successMsg, icon: 'success' })
       setTimeout(() => {
         uni.reLaunch({ url: '/pages/order/index' })

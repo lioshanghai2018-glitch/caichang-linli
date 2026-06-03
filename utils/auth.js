@@ -6,6 +6,9 @@ function callCloud(method, params) {
     uni.request({
       url: `${API_BASE}/${method}`,
       method: 'POST',
+      header: {
+        'Authorization': `Bearer ${uni.getStorageSync(STORAGE_KEYS.TOKEN) || ''}`
+      },
       data: { method, params },
       success: (res) => {
         if (res.statusCode === 200 && res.data && res.data.code === 0) {
@@ -83,12 +86,14 @@ export async function sendSmsCode(phone) {
   return callCloud('sendSmsCode', { phone })
 }
 
-// 测试模式：跳过登录（开发用）
+// 测试模式：跳过登录（仅 H5 / App 开发用，不编译进小程序发布包）
+// #ifdef H5 || APP-PLUS
 export function loginAsTest(userId) {
   uni.setStorageSync(STORAGE_KEYS.TOKEN, 'test-mode')
   uni.setStorageSync(STORAGE_KEYS.USER_ID, userId || ('test_' + Date.now()))
   uni.setStorageSync(STORAGE_KEYS.USER_INFO, { nickname: '测试用户', mode: 'test' })
 }
+// #endif
 
 export function requireLogin() {
   if (!isLoggedIn()) {

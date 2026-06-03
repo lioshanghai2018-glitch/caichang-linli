@@ -102,7 +102,12 @@
       "Bash(nslookup api.next.bspapp.com 8.8.8.8)",
       "Bash(nslookup fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com 8.8.8.8)",
       "Bash([ -f \"$p.vue\" ])",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(git checkout *)",
+      "Bash(gh api *)",
+      "Bash(git config *)",
+      "Bash(gh auth *)",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }

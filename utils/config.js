@@ -9,6 +9,7 @@ const ORDER_STATUS = {
   PENDING_SORTING: 'pending_sorting',
   SORTING: 'sorting',
   DELIVERING: 'delivering',
+  READY_FOR_PICKUP: 'ready_for_pickup',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled',
   REFUNDING: 'refunding',
@@ -27,6 +28,7 @@ const ORDER_STATUS_TEXT = {
   pending_sorting: '待分拣',
   sorting: '分拣中',
   delivering: '配送中',
+  ready_for_pickup: '待自提',
   completed: '已完成',
   cancelled: '已取消',
   refunding: '退款中',
@@ -43,6 +45,7 @@ const STORAGE_KEYS = {
   TOKEN_EXPIRED: 'uni_id_token_expired',
   USER_INFO: 'user_info',
   USER_ID: 'user_id',
+  USER_PHONE: 'user_phone',
   CART: 'cart_items',
   ADDRESS_SELECTED: 'selected_address_id'
 }

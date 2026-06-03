@@ -122,7 +122,6 @@ export default {
 					params.status = this.currentStatus
 				}
 				const res = await getMyPosts(params)
-				console.log('getMyPosts response:', JSON.stringify(res))
 				this.posts = res.data || []
 			} catch (e) {
 				// 使用本地存储

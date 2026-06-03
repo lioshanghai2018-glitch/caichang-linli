@@ -126,10 +126,8 @@ export default {
     }
   },
   onLoad(options) {
-    console.log('detail onLoad options:', JSON.stringify(options))
     if (options.id) {
       this.postId = options.id
-      console.log('detail postId:', this.postId)
       this.loadPostDetail()
       this.loadComments()
     }
@@ -146,15 +144,11 @@ export default {
     },
 
     async loadPostDetail() {
-      console.log('loadPostDetail called, postId:', this.postId)
       try {
         const res = await getPostDetail({ postId: this.postId, userId: this.userId })
-        console.log('getPostDetail response:', JSON.stringify(res))
         if (res.data) {
-          // res.data 是数组，需要取第一个元素
           const postData = Array.isArray(res.data) ? res.data[0] : res.data
           this.post = { ...this.post, ...postData }
-          console.log('post after assignment:', JSON.stringify(this.post))
         }
       } catch (e) {
         console.error('加载详情失败', e)

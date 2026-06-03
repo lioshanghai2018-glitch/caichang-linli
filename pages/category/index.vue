@@ -22,10 +22,10 @@
 		<!-- 优惠插图轮播 -->
 		<swiper class="promo-swiper" circular="true" @change="onPromoChange">
 			<swiper-item>
-				<image class="promo-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+				<image class="promo-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
 			</swiper-item>
 			<swiper-item>
-				<image class="promo-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+				<image class="promo-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
 			</swiper-item>
 		</swiper>
 		<view class="promo-indicators">
@@ -224,7 +224,7 @@
 						break;
 					}
 				}
-				console.log('点击分类:', catName, '标题索引:', headerIndex);
+				// 已移除调试日志
 				if (headerIndex >= 0) {
 					var targetId = 'cat-header-' + headerIndex;
 					// 先清空，再延迟设置，确保触发滚动
@@ -279,9 +279,6 @@
 								if (bIndex === -1) return -1;
 								return aIndex - bIndex;
 							});
-							console.log('排序后商品:', self.products.map(function(p) { return p.categoryName + ':' + p.name; }).join(', '));
-							console.log('加载商品成功，共', self.products.length, '个');
-							// 手动构建 productsWithHeader 看长度
 							var result = [];
 							var lastCatName = '';
 							for (var i = 0; i < self.products.length; i++) {
@@ -292,7 +289,6 @@
 								}
 								result.push(p);
 							}
-							console.log('productsWithHeader 长度:', result.length);
 							self.syncCart();
 						}
 					},

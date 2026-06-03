@@ -4,12 +4,20 @@
 		<view class="header">
 			<view class="search-bar">
 				<view class="search-icon-line"></view>
-				<text class="search-placeholder">搜索邻里帖子</text>
+				<input
+					class="search-input"
+					v-model="searchKeyword"
+					placeholder="搜索邻里帖子"
+					placeholder-class="search-placeholder"
+					confirm-type="search"
+					@confirm="onSearch"
+				/>
+				<view v-if="searchKeyword" class="search-clear" @tap="clearSearch">×</view>
 			</view>
 		</view>
 
 		<!-- 邻里横幅 -->
-		<image class="banner-image" src="/static/images/banner_neighbor.jpg" mode="aspectFill"></image>
+		<image class="banner-image" src="/static/images/banner_neighbor.webp" mode="aspectFill"></image>
 
 		<!-- 分类标签栏 -->
 		<scroll-view class="tag-bar" scroll-x="true">
@@ -117,6 +125,17 @@ export default {
 	methods: {
 			switchTag(index) {
 				this.currentTag = index
+				this.resetAndLoad()
+			},
+			onSearch() {
+				if (!this.searchKeyword.trim()) {
+					uni.showToast({ title: '请输入搜索关键词', icon: 'none' })
+					return
+				}
+				this.resetAndLoad()
+			},
+			clearSearch() {
+				this.searchKeyword = ''
 				this.resetAndLoad()
 			},
 			toggleMenu() {
@@ -306,6 +325,26 @@ export default {
 .search-placeholder {
 	font-size: 28rpx;
 	color: #999999;
+}
+
+.search-input {
+	flex: 1;
+	font-size: 28rpx;
+	color: #333333;
+	height: 60rpx;
+	line-height: 60rpx;
+}
+
+.search-clear {
+	width: 40rpx;
+	height: 40rpx;
+	line-height: 36rpx;
+	text-align: center;
+	font-size: 32rpx;
+	color: #999999;
+	background-color: #E0E0E0;
+	border-radius: 50%;
+	margin-left: 8rpx;
 }
 
 /* 邻里横幅 */

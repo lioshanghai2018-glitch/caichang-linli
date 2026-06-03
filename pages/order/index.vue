@@ -18,6 +18,14 @@
 			</view>
 		</view>
 
+		<!-- 历史订单：右上角清空按钮（仅在历史 tab 且有订单时显示） -->
+		<view class="history-toolbar" v-if="currentTab === 1 && historyOrders.length > 0">
+			<text class="history-count">共 {{ historyOrders.length }} 单</text>
+			<view class="clear-history-btn" @tap="clearAllHistory">
+				<text>清空历史</text>
+			</view>
+		</view>
+
 		<!-- 当前订单列表 -->
 		<scroll-view
 			class="order-list"
@@ -31,13 +39,13 @@
 			<view class="order-card" v-for="order in currentOrders" :key="order._id || order.id" @tap="toggleDetail(order)">
 				<!-- 卡片头部 -->
 				<view class="order-header">
-					<text class="order-id">订单号：{{getOrderIdTail(order)}}</text>
+					<text class="order-id" @tap.stop="copyOrderNo(order.id || order.orderNo)">订单号：{{getOrderIdTail(order)}}</text>
 					<view class="order-status-tag">
 						<text>{{getStepLabel(order)}}</text>
 					</view>
 				</view>
 
-				<!-- 配送进度条 -->
+				<!-- 配送/自提进度条（自提单第 3 步显示"待自提"） -->
 				<view class="step-progress">
 					<view class="step-item" :class="{ active: true, current: getStepIndex(order) === 0 }">
 						<view class="iconfont icon-daifukuan" v-if="isPendingStatus(order)"></view>
@@ -51,8 +59,8 @@
 					</view>
 					<view class="step-line" :class="{ active: getStepIndex(order) >= 2 }"></view>
 					<view class="step-item" :class="{ active: getStepIndex(order) >= 2, current: getStepIndex(order) === 2 }">
-						<view class="iconfont icon-peisong"></view>
-						<text class="step-label">配送中</text>
+						<view class="iconfont" :class="isSelfPickup(order) ? 'icon-dingwei' : 'icon-peisong'"></view>
+						<text class="step-label">{{isSelfPickup(order) ? '待自提' : '配送中'}}</text>
 					</view>
 					<view class="step-line" :class="{ active: getStepIndex(order) >= 3 }"></view>
 					<view class="step-item" :class="{ active: getStepIndex(order) >= 3, current: getStepIndex(order) === 3 }">
@@ -62,7 +70,7 @@
 				</view>
 
 				<!-- 商品列表 -->
-				<view class="product-row" v-for="(product, pIdx) in order.items" :key="pIdx">
+				<view class="product-row" v-for="(product, pIdx) in (order.items || order.products || [])" :key="pIdx">
 					<image class="product-thumb" :src="product.image" mode="aspectFill"></image>
 					<view class="product-info">
 						<text class="product-name">{{product.name}}</text>
@@ -97,7 +105,7 @@
 						</view>
 						<view class="info-row">
 							<text class="info-label">订单号</text>
-							<text class="info-value">{{order.orderNo}}</text>
+							<text class="info-value">{{order.orderNo || order.id}}</text>
 						</view>
 						<view class="info-row">
 							<text class="info-label">下单时间</text>
@@ -122,6 +130,8 @@
 						<view class="action-btn cancel" @tap="cancelOrder(order)"><text>取消订单</text></view>
 					</view>
 					<view class="footer-btns" v-else>
+						<view v-if="isReadyForPickup(order)"
+							class="action-btn primary" @tap="confirmPickup(order)"><text>我已自提</text></view>
 						<view class="action-btn cancel" @tap="cancelOrder(order)"><text>取消订单</text></view>
 					</view>
 				</view>
@@ -134,7 +144,7 @@
 				<!-- 卡片头部 -->
 				<view class="order-header">
 					<view class="order-header-left">
-						<text class="order-id">订单号：{{getOrderIdTail(order)}}</text>
+						<text class="order-id" @tap.stop="copyOrderNo(order.id || order.orderNo)">订单号：{{getOrderIdTail(order)}}</text>
 						<view class="order-status" :class="getHistoryStatusClass(order)">
 							<text>{{getHistoryStatusLabel(order)}}</text>
 						</view>
@@ -145,7 +155,7 @@
 				</view>
 
 				<!-- 商品列表 -->
-				<view class="product-row" v-for="(product, pIdx) in order.items" :key="pIdx">
+				<view class="product-row" v-for="(product, pIdx) in (order.items || order.products || [])" :key="pIdx">
 					<image class="product-thumb" :src="product.image" mode="aspectFill"></image>
 					<view class="product-info">
 						<text class="product-name">{{product.name}}</text>
@@ -175,7 +185,7 @@
 						</view>
 						<view class="info-row">
 							<text class="info-label">订单号</text>
-							<text class="info-value">{{order.orderNo}}</text>
+							<text class="info-value">{{order.orderNo || order.id}}</text>
 						</view>
 						<view class="info-row">
 							<text class="info-label">下单时间</text>
@@ -211,7 +221,7 @@
 </template>
 
 <script>
-import { ORDER_STATUS, ORDER_STATUS_TEXT } from '@/utils/config.js'
+import { ORDER_STATUS, ORDER_STATUS_TEXT, STORAGE_KEYS } from '@/utils/config.js'
 
 // 旧数据兼容：把历史写入的中文/旧英文 status 归一为新枚举
 const LEGACY_TO_CANONICAL = {
@@ -226,17 +236,13 @@ const LEGACY_TO_CANONICAL = {
   '已退款': ORDER_STATUS.REFUNDED
 }
 
-function toCanonical(s) {
-  if (!s) return s
-  return LEGACY_TO_CANONICAL[s] || s
-}
-
 // 进行中：未结束
 const ACTIVE_STATUSES = [
   ORDER_STATUS.PENDING_PAYMENT,
   ORDER_STATUS.PAID,
   ORDER_STATUS.PENDING_SORTING,
   ORDER_STATUS.SORTING,
+  ORDER_STATUS.READY_FOR_PICKUP,
   ORDER_STATUS.DELIVERING,
   'pending', 'confirmed', '待支付', '已接单', '配送中'
 ]
@@ -269,21 +275,98 @@ export default {
 		if (!uni.getStorageSync('userId')) {
 			uni.setStorageSync('userId', this.userId.replace('user_', ''))
 		}
-		this.syncOrders()
+		// 一次性迁移：从老本地订单里取一次 phone（仅升级期有效）
+		if (!uni.getStorageSync(STORAGE_KEYS.USER_PHONE)) {
+			const legacy = uni.getStorageSync('order_list')
+			if (legacy) {
+				try {
+					const list = JSON.parse(legacy)
+					const phone = list && list[0] && list[0].address && list[0].address.phone
+					if (phone) uni.setStorageSync(STORAGE_KEYS.USER_PHONE, phone)
+				} catch (e) {}
+			}
+		}
+		this.loadFromCloud()
 		this.startPolling()
+	},
+	onHide() {
+		// 切到其他 tab 时暂停轮询，省电
+		this.stopPolling()
 	},
 	onUnload() {
 		this.stopPolling()
 	},
 	methods: {
+		// 模板和方法都要用，必须挂在实例上（不能放文件作用域）
+		toCanonical(s) {
+			if (!s) return s
+			return LEGACY_TO_CANONICAL[s] || s
+		},
 		startPolling() {
 			this.stopPolling()
-			this._pollTimer = setInterval(() => this.syncOrders(), 8000)
+			this._pollTimer = setInterval(() => this.loadFromCloud(), 8000)
 		},
 		stopPolling() {
 			if (this._pollTimer) {
 				clearInterval(this._pollTimer)
 				this._pollTimer = null
+			}
+		},
+		// 纯云端拉取：所有订单状态/列表都以云端为唯一权威
+		async loadFromCloud() {
+			this.loading = true
+			try {
+				const userPhone = uni.getStorageSync(STORAGE_KEYS.USER_PHONE) || ''
+				if (!userPhone) {
+					// 首次访问（未下过单），空列表
+					this.currentOrders = []
+					this.historyOrders = []
+					this.loading = false
+					return
+				}
+				const res = await this.callAPI('getOrders', { userPhone })
+				const list = (res.data || []).map(o => this.normalizeOrder(o))
+				this.currentOrders = list.filter(o =>
+					ACTIVE_DELIVERY.includes(o.deliveryStatus) ||
+					ACTIVE_STATUSES.includes(this.toCanonical(o.status))
+				)
+				this.historyOrders = list.filter(o =>
+					HISTORY_STATUSES.includes(this.toCanonical(o.status))
+				)
+			} catch (e) {
+				console.error('获取订单失败:', e)
+				uni.showToast({ title: '加载失败，下拉重试', icon: 'none' })
+				this.currentOrders = []
+				this.historyOrders = []
+			}
+			this.loading = false
+		},
+		// 归一云端订单为模板需要的字段
+		normalizeOrder(o) {
+			return {
+				orderNo: o.orderNo,
+				shortOrderNo: o.shortOrderNo,
+				_id: o._id,
+				id: o._id,
+				status: o.status,
+				deliveryStatus: o.deliveryStatus,
+				deliveryType: o.deliveryType || 'self',
+				items: (o.items || []).map(it => ({
+					name: it.name || it.productName,
+					spec: it.spec,
+					qty: it.qty || it.quantity || 1,
+					price: Number(it.price || 0).toFixed(2),
+					image: it.image || it.coverImage
+				})),
+				address: o.address || {},
+				remark: o.remark,
+				totalAmount: o.totalAmount,
+				payAmount: o.payAmount,
+				deliveryFee: o.deliveryFee,
+				deliveryTime: o.deliveryTime,
+				orderTime: o.orderTime,
+				payMethod: o.payMethod,
+				createdAt: o.createdAt
 			}
 		},
 		// 调用云端API
@@ -304,24 +387,10 @@ export default {
 				})
 			})
 		},
-		async syncOrders() {
-			this.loading = true
-			try {
-				const res = await this.callAPI('getOrders', { userId: this.userId })
-				const list = res.data || []
-				console.log('订单列表:', list)
-				// 按状态分类（包含 deliveryStatus 判断）
-				this.currentOrders = list.filter(o => {
-					if (ACTIVE_DELIVERY.includes(o.deliveryStatus)) return true
-					return ACTIVE_STATUSES.includes(toCanonical(o.status))
-				})
-				this.historyOrders = list.filter(o => HISTORY_STATUSES.includes(toCanonical(o.status)))
-			} catch (e) {
-				console.error('获取订单失败:', e)
-				// 失败时尝试从本地存储读取
-				this.loadLocalOrders()
-			}
-			this.loading = false
+		// 业务唯一键：orderNo 优先（用户自定义稳定），id/_id 兜底
+		orderKey(o) {
+			if (!o) return ''
+			return o.orderNo || o.id || o._id || ''
 		},
 		async onRefresh() {
 			// 防重：如果正在刷新中，直接返回
@@ -331,24 +400,12 @@ export default {
 			}
 			this.isRefreshing = true
 			this.refreshing = true
-			await this.syncOrders()
+			await this.loadFromCloud()
 			this.refreshing = false
 			// 延迟解除防重，避免快速连续触发
 			setTimeout(() => {
 				this.isRefreshing = false
 			}, 1000)
-		},
-		loadLocalOrders() {
-			try {
-				const data = uni.getStorageSync('order_list')
-				if (data) {
-					const list = JSON.parse(data)
-					if (Array.isArray(list) && list.length > 0) {
-						this.currentOrders = list.filter(o => ACTIVE_STATUSES.includes(toCanonical(o.status)) || ACTIVE_DELIVERY.includes(o.deliveryStatus))
-						this.historyOrders = list.filter(o => HISTORY_STATUSES.includes(toCanonical(o.status)))
-					}
-				}
-			} catch (e) {}
 		},
 		switchTab(index) {
 			this.currentTab = index
@@ -372,21 +429,30 @@ export default {
 			return String(id).slice(-5) || '-----'
 		},
 		async cancelOrder(order) {
+			// 自提单：已分拣 / 待自提阶段，商家已备货，不能直接 cancel，要走退款申请
+			const isSelf = this.isSelfPickup(order)
+			const s = this.toCanonical(order.status)
+			const advanced = s === ORDER_STATUS.SORTING || s === ORDER_STATUS.READY_FOR_PICKUP
+			if (isSelf && advanced) {
+				return this.afterSale(order)
+			}
 			uni.showModal({
 				title: '确认取消',
 				content: '确定要取消该订单吗？',
 				success: async (res) => {
 					if (res.confirm) {
-						try {
-							// 调用云端API取消订单
-							await this.callAPI('updateOrderStatus', { orderNo: order.orderNo, status: 'cancelled' })
-							uni.showToast({ title: '订单已取消', icon: 'success' })
-						} catch (e) {
-							console.error('云端取消失败:', e)
+						const orderId = this.orderKey(order)
+						if (!orderId) {
+							uni.showToast({ title: '订单号缺失', icon: 'none' })
+							return
 						}
-						// 更新本地
-						order.status = 'cancelled'
-						this.syncOrders()
+						try {
+							await this.callAPI('updateOrderStatus', { orderNo: orderId, status: 'cancelled' })
+							uni.showToast({ title: '订单已取消', icon: 'success' })
+							this.loadFromCloud()
+						} catch (e) {
+							uni.showToast({ title: e.msg || '取消失败', icon: 'none' })
+						}
 					}
 				}
 			})
@@ -399,11 +465,16 @@ export default {
 				placeholderText: '商品损坏/不想买了等',
 				success: async (res) => {
 					if (res.confirm) {
+						const orderId = this.orderKey(order)
+						if (!orderId) {
+							uni.showToast({ title: '订单号缺失', icon: 'none' })
+							return
+						}
 						try {
 							const reason = res.content || '用户申请退款'
-							await this.callAPI('applyRefund', { orderNo: order.orderNo, reason })
+							await this.callAPI('applyRefund', { orderNo: orderId, reason })
 							uni.showToast({ title: '退款申请已提交', icon: 'success' })
-							this.syncOrders()
+							this.loadFromCloud()
 						} catch (e) {
 							console.error('申请售后失败:', e)
 							uni.showToast({ title: '申请失败', icon: 'none' })
@@ -416,14 +487,28 @@ export default {
 			uni.showToast({ title: '再来一单功能开发中', icon: 'none' })
 		},
 		isPendingStatus(order) {
-			return toCanonical(order.status) === ORDER_STATUS.PENDING_PAYMENT
+			return this.toCanonical(order.status) === ORDER_STATUS.PENDING_PAYMENT
 		},
 		getStepIndex(order) {
+			const s = this.toCanonical(order.status)
+			// 自提单专用映射：已下单(0)→分拣中(1)→待自提(2)→已完成(3)
+			if (this.isSelfPickup(order)) {
+				const selfMap = {
+					[ORDER_STATUS.PAID]: 0,
+					[ORDER_STATUS.PENDING_SORTING]: 0,
+					[ORDER_STATUS.SORTING]: 1,
+					[ORDER_STATUS.READY_FOR_PICKUP]: 2,
+					[ORDER_STATUS.COMPLETED]: 3,
+					[ORDER_STATUS.CANCELLED]: -1,
+					[ORDER_STATUS.REFUNDED]: -1
+				}
+				return selfMap[s] ?? 0
+			}
+			// 配送单：原 deliveryStatus 优先
 			if (order.deliveryStatus === 'accepted' || order.deliveryStatus === 'picked_up') return 1
 			if (order.deliveryStatus === 'delivering') return 2
 			if (order.deliveryStatus === 'completed') return 3
 
-			const s = toCanonical(order.status)
 			const map = {
 				[ORDER_STATUS.PENDING_PAYMENT]: 0,
 				[ORDER_STATUS.PAID]: 1,
@@ -440,16 +525,38 @@ export default {
 			if (order.deliveryStatus === 'accepted' || order.deliveryStatus === 'picked_up') return '分拣中'
 			if (order.deliveryStatus === 'delivering') return ORDER_STATUS_TEXT.delivering
 			if (order.deliveryStatus === 'completed') return ORDER_STATUS_TEXT.completed
-			return ORDER_STATUS_TEXT[toCanonical(order.status)] || '处理中'
+			return ORDER_STATUS_TEXT[this.toCanonical(order.status)] || '处理中'
+		},
+		isSelfPickup(order) {
+			return order && order.deliveryType === 'self'
+		},
+		async confirmPickup(order) {
+			const orderId = this.orderKey(order)
+			if (!orderId) {
+				uni.showToast({ title: '订单号缺失', icon: 'none' })
+				return
+			}
+			try {
+				await this.callAPI('updateOrderStatus', { orderNo: orderId, status: ORDER_STATUS.COMPLETED })
+				uni.showToast({ title: '感谢您的自提', icon: 'success' })
+				this.loadFromCloud()
+			} catch (e) {
+				console.error('确认自提失败:', e)
+				uni.showToast({ title: '操作失败，请重试', icon: 'none' })
+			}
 		},
 		isFirstStepActive(order) {
 			return true
 		},
+		// 模板里用：自提单 + 已到待自提阶段
+		isReadyForPickup(order) {
+			return this.isSelfPickup(order) && this.toCanonical(order.status) === ORDER_STATUS.READY_FOR_PICKUP
+		},
 		getHistoryStatusLabel(order) {
-			return ORDER_STATUS_TEXT[toCanonical(order.status)] || order.status
+			return ORDER_STATUS_TEXT[this.toCanonical(order.status)] || order.status
 		},
 		getHistoryStatusClass(order) {
-			if (toCanonical(order.status) === ORDER_STATUS.COMPLETED) return 'done'
+			if (this.toCanonical(order.status) === ORDER_STATUS.COMPLETED) return 'done'
 			return 'cancelled'
 		},
 		deleteOrder(order) {
@@ -458,14 +565,41 @@ export default {
 				content: '确定要删除该订单吗？',
 				success: async (res) => {
 					if (res.confirm) {
-						try {
-							await this.callAPI('deleteOrder', { orderNo: order.orderNo })
-						} catch (e) {
-							console.error('删除失败:', e)
+						const orderId = this.orderKey(order)
+						if (!orderId) {
+							uni.showToast({ title: '订单号缺失', icon: 'none' })
+							return
 						}
-						this.syncOrders()
-						uni.showToast({ title: '已删除', icon: 'success' })
+						try {
+							await this.callAPI('deleteOrder', { orderNo: orderId })
+							uni.showToast({ title: '已删除', icon: 'success' })
+							this.loadFromCloud()
+						} catch (e) {
+							uni.showToast({ title: e.msg || '删除失败', icon: 'none' })
+						}
 					}
+				}
+			})
+		},
+		clearAllHistory() {
+			uni.showModal({
+				title: '清空历史订单',
+				content: '将清空所有历史订单（云端），此操作不可恢复，是否继续？',
+				confirmText: '一键清空',
+				confirmColor: '#ff4d4f',
+				success: async (res) => {
+					if (!res.confirm) return
+					const targets = (this.historyOrders || []).map(o => this.orderKey(o)).filter(Boolean)
+					uni.showLoading({ title: '清空中...' })
+					// 云端一条条删
+					for (const oid of targets) {
+						try {
+							await this.callAPI('deleteOrder', { orderNo: oid })
+						} catch (e) {}
+					}
+					uni.hideLoading()
+					uni.showToast({ title: '已清空', icon: 'success' })
+					this.loadFromCloud()
 				}
 			})
 		}
@@ -489,6 +623,33 @@ export default {
 	height: 88rpx;
 	background-color: #FFFFFF;
 	border-bottom: 1rpx solid #EEEEEE;
+}
+
+/* 历史订单工具栏 */
+.history-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 16rpx 24rpx;
+	background-color: #FFFFFF;
+	border-bottom: 1rpx solid #F0F0F0;
+}
+
+.history-count {
+	font-size: 24rpx;
+	color: #999999;
+}
+
+.clear-history-btn {
+	background-color: #FFF1F0;
+	border: 1rpx solid #FFCCC7;
+	border-radius: 8rpx;
+	padding: 6rpx 16rpx;
+}
+
+.clear-history-btn text {
+	font-size: 22rpx;
+	color: #FF4D4F;
 }
 
 .tab-item {

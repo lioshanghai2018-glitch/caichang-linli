@@ -1,23 +1,5 @@
 // 邻里社区 API
-const baseURL = 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api'
-
-const request = (method, params = {}) => {
-  return new Promise((resolve, reject) => {
-    uni.request({
-      url: `${baseURL}/${method}`,
-      method: 'POST',
-      data: { method, params },
-      success: (res) => {
-        if (res.data && res.data.code === 0) {
-          resolve(res.data)
-        } else {
-          reject(res.data || { error: '请求失败' })
-        }
-      },
-      fail: (err) => reject(err)
-    })
-  })
-}
+import { request } from './request.js'
 
 // 分类配置
 export const CATEGORIES = [
@@ -68,14 +50,14 @@ export const getMyPosts = (params = {}) => {
 
 // ==================== 互动相关 ====================
 
-// 点赞/取消点赞
+// 点赞/取消点赞（userId 忽略，由云端从 token 解析）
 export const toggleLike = (postId, userId) => {
-  return request('toggleLike', { postId, userId })
+  return request('toggleLike', { postId })
 }
 
-// 关注/取消关注
+// 关注/取消关注（userId 忽略，由云端从 token 解析）
 export const toggleFollow = (targetUserId, userId) => {
-  return request('toggleFollow', { targetUserId, userId })
+  return request('toggleFollow', { targetUserId })
 }
 
 // ==================== 评论相关 ====================
@@ -85,16 +67,16 @@ export const getComments = (postId, page = 1, pageSize = 20) => {
   return request('getComments', { postId, page, pageSize })
 }
 
-// 发表评论
+// 发表评论（userId 忽略，由云端从 token 解析；authorName 仅作显示用）
 export const createComment = (postId, userId, content, authorName) => {
-  return request('createComment', { postId, userId, content, authorName })
+  return request('createComment', { postId, content, authorName })
 }
 
 // ==================== 认证相关 ====================
 
-// 获取认证状态
+// 获取认证状态（userId 忽略，由云端从 token 解析）
 export const getCertStatus = (userId) => {
-  return request('getCertStatus', { userId })
+  return request('getCertStatus', {})
 }
 
 // 提交认证申请
@@ -102,9 +84,9 @@ export const submitCert = (certData) => {
   return request('submitCert', certData)
 }
 
-// 检查是否已认证（可用于发帖前检查）
+// 检查是否已认证（userId 忽略，由云端从 token 解析）
 export const checkCert = (userId) => {
-  return request('checkCert', { userId })
+  return request('checkCert', {})
 }
 
 // ==================== 本地认证状态管理 ====================
@@ -114,11 +96,9 @@ export const getLocalCertStatus = () => {
   return uni.getStorageSync('cert_status') || 'none'
 }
 
-// 保存本地认证状态
+// 保存本地认证状态（**不持久化身份证/账单图片 URL**，敏感图片仅在云端存储）
 export const saveLocalCertStatus = (status, data = {}) => {
   uni.setStorageSync('cert_status', status)
-  if (data.idCardUrl) uni.setStorageSync('cert_id_card', data.idCardUrl)
-  if (data.billUrl) uni.setStorageSync('cert_bill', data.billUrl)
   if (data.communityName) uni.setStorageSync('cert_community', data.communityName)
   if (data.submitTime) uni.setStorageSync('cert_submit_time', data.submitTime)
   if (data.rejectReason) uni.setStorageSync('cert_reject_reason', data.rejectReason)

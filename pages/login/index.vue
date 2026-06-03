@@ -7,6 +7,7 @@
   </view>
 
   <view class="form-section">
+    <!-- #ifdef H5 || APP-PLUS -->
     <view class="tab-bar">
       <view class="tab" :class="{active: mode === 'sms'}" @tap="mode = 'sms'">
         <text>手机号登录</text>
@@ -46,14 +47,40 @@
       </view>
       <button class="btn-login" :loading="testLoading" @tap="handleTestLogin">进入测试模式</button>
     </block>
+    <!-- #endif -->
+
+    <!-- #ifdef MP-WEIXIN -->
+    <view class="input-group">
+      <text class="label">手机号</text>
+      <view class="phone-row">
+        <input class="input" type="number" v-model="phone" placeholder="请输入手机号" maxlength="11" />
+        <view class="btn-sms" @tap="handleSendSms">
+          <text>{{smsCountdown > 0 ? smsCountdown + 's' : '获取验证码'}}</text>
+        </view>
+      </view>
+    </view>
+    <view class="input-group">
+      <text class="label">验证码</text>
+      <input class="input" type="number" v-model="code" placeholder="请输入验证码" maxlength="6" />
+    </view>
+    <button class="btn-login" :loading="loading" @tap="handleSmsLogin">登录</button>
+    <!-- #endif -->
   </view>
 
-  <text class="footer">登录即视为同意《用户协议》与《隐私政策》</text>
+  <view class="footer">
+    <text>登录即视为同意</text>
+    <navigator url="/pages/agreement/agreement?type=user" class="link">《用户协议》</navigator>
+    <text>与</text>
+    <navigator url="/pages/agreement/agreement?type=privacy" class="link">《隐私政策》</navigator>
+  </view>
 </view>
 </template>
 
 <script>
-import { loginBySms, sendSmsCode, loginByUniverify, loginAsTest } from '@/utils/auth.js'
+// #ifdef H5 || APP-PLUS
+import { loginAsTest } from '@/utils/auth.js'
+// #endif
+import { loginBySms, sendSmsCode, loginByUniverify } from '@/utils/auth.js'
 
 export default {
   data() {
@@ -62,9 +89,11 @@ export default {
       phone: '',
       code: '',
       loading: false,
+      // #ifdef H5 || APP-PLUS
       testLoading: false,
-      oneClickLoading: false,
       testUserId: '',
+      // #endif
+      oneClickLoading: false,
       smsCountdown: 0,
       _smsTimer: null
     }
@@ -111,6 +140,7 @@ export default {
         this.loading = false
       }
     },
+    // #ifdef H5 || APP-PLUS
     async handleOneClick() {
       this.oneClickLoading = true
       try {
@@ -133,6 +163,7 @@ export default {
         this.testLoading = false
       }
     }
+    // #endif
   }
 }
 </script>
@@ -278,10 +309,18 @@ export default {
   margin-bottom: 16rpx;
 }
 .footer {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   font-size: 22rpx;
   color: #999;
   text-align: center;
   margin-top: 40rpx;
+}
+.footer .link {
+  color: #2D5A27;
+  text-decoration: underline;
+  margin: 0 4rpx;
 }
 </style>

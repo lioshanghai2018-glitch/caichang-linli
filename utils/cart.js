@@ -1,5 +1,6 @@
 // 购物车工具函数
 const CART_KEY = 'cartItems'
+const MAX_QTY_PER_ITEM = 99  // 单商品最大数量
 
 export function getCartItems() {
   try {
@@ -17,10 +18,12 @@ export function saveCartItems(items) {
 export function addToCart(product) {
   const cart = getCartItems()
   const existingIndex = cart.findIndex(item => item.id === product.id)
+  const addQty = product.quantity || 1
   if (existingIndex > -1) {
-    cart[existingIndex].quantity += product.quantity || 1
+    const newQty = Math.min(cart[existingIndex].quantity + addQty, MAX_QTY_PER_ITEM)
+    cart[existingIndex].quantity = newQty
   } else {
-    cart.push({ ...product, quantity: product.quantity || 1 })
+    cart.push({ ...product, quantity: Math.min(addQty, MAX_QTY_PER_ITEM) })
   }
   saveCartItems(cart)
   return cart
@@ -33,11 +36,15 @@ export function updateCartItem(id, quantity) {
     if (quantity <= 0) {
       cart.splice(index, 1)
     } else {
-      cart[index].quantity = quantity
+      cart[index].quantity = Math.min(quantity, MAX_QTY_PER_ITEM)
     }
   }
   saveCartItems(cart)
   return cart
+}
+
+export function getMaxQty() {
+  return MAX_QTY_PER_ITEM
 }
 
 export function removeFromCart(id) {

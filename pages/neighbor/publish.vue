@@ -196,7 +196,7 @@ export default {
 				contactPhone: this.form.contactPhone,
 				price: this.form.price,
 				authorName: uni.getStorageSync('userName') || '邻居',
-				authorId: uni.getStorageSync('userId') || 'user_default',
+				// authorId 不再从本地 storage 读取，**由云端从 token 解析**
 				likes: 0,
 				comments: 0,
 				status: 1,
@@ -209,7 +209,7 @@ export default {
 					uni.showToast({ title: '保存成功', icon: 'success' })
 				} else {
 					await createPost(postData)
-					uni.showToast({ title: '发布成功', icon: 'success' })
+					uni.showToast({ title: '已提交，待审核', icon: 'success' })
 				}
 			} catch (e) {
 				// API 未就绪时使用本地存储
@@ -223,7 +223,7 @@ export default {
 				} else {
 					localPosts.unshift(postData)
 					uni.setStorageSync('local_posts', localPosts)
-					uni.showToast({ title: '发布成功', icon: 'success' })
+					uni.showToast({ title: '已提交，待审核', icon: 'success' })
 				}
 			}
 

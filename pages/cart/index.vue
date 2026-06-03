@@ -138,6 +138,11 @@ export default {
       this.saveCart()
     },
     increase(index) {
+      const MAX = 99
+      if (this.cartItems[index].quantity >= MAX) {
+        uni.showToast({ title: '已达单次购买上限', icon: 'none' })
+        return
+      }
       this.cartItems[index].quantity++
       this.saveCart()
     },

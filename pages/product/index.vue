@@ -24,6 +24,10 @@
       <view class="service-tag">
         <text>{{ product.service }}</text>
       </view>
+      <view class="stock-hint">
+        <text class="stock-dot"></text>
+        <text class="stock-text">库存充足</text>
+      </view>
     </view>
 
     <!-- 商品描述 -->
@@ -236,6 +240,23 @@ export default {
 }
 
 .service-tag text {
+  font-size: 22rpx;
+  color: #4F9A42;
+}
+
+.stock-hint {
+  display: flex;
+  align-items: center;
+  margin-top: 12rpx;
+}
+.stock-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background-color: #4F9A42;
+  margin-right: 8rpx;
+}
+.stock-text {
   font-size: 22rpx;
   color: #4F9A42;
 }
