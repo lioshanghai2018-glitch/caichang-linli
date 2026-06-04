@@ -2,7 +2,7 @@
   <view class="container">
     <!-- IP形象区域 -->
     <view class="ip-section">
-      <image class="ip-image" src="/static/images/萝卜仔.webp" mode="aspectFill"></image>
+      <image class="ip-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/萝卜仔22.png" mode="aspectFill"></image>
     </view>
 
     <!-- 卡片1：问候 + 买菜邻里 -->
@@ -71,10 +71,10 @@
       <view class="group-section">
         <swiper class="group-swiper" circular="true" @change="onSwiperChange">
           <swiper-item>
-            <image class="group-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
+            <image class="group-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
           </swiper-item>
           <swiper-item>
-            <image class="group-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
+            <image class="group-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
           </swiper-item>
         </swiper>
         <view class="swiper-indicators">
@@ -134,12 +134,10 @@
 
         quickActions: [
           {
-            icon: '/static/images/icon_vegetable.png',
             title: '买菜',
             subtitle: '提前下单 送菜上门'
           },
           {
-            icon: '/static/images/icon_neighbor.png',
             title: '邻里',
             subtitle: '免费发布 邻里互助'
           }
@@ -270,7 +268,9 @@
 
       addToCart(item) {
         item.quantity++;
+        console.log('[index] addToCart, item.quantity=', item.quantity, 'selectedCount=', this.selectedCount)
         this.saveFlashSaleToCart();
+        console.log('[index] after saveFlashSaleToCart, selectedCount=', this.selectedCount, 'selectedTotal=', this.selectedTotal)
       },
 
       decreaseFromFlash(product) {

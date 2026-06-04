@@ -22,10 +22,10 @@
 		<!-- 优惠插图轮播 -->
 		<swiper class="promo-swiper" circular="true" @change="onPromoChange">
 			<swiper-item>
-				<image class="promo-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
+				<image class="promo-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
 			</swiper-item>
 			<swiper-item>
-				<image class="promo-image" src="/static/images/shucailan.webp" mode="aspectFill"></image>
+				<image class="promo-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
 			</swiper-item>
 		</swiper>
 		<view class="promo-indicators">

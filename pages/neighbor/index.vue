@@ -17,7 +17,7 @@
 		</view>
 
 		<!-- 邻里横幅 -->
-		<image class="banner-image" src="/static/images/banner_neighbor.webp" mode="aspectFill"></image>
+		<image class="banner-image" src="/static/images/banner_neighbor.png" mode="aspectFill"></image>
 
 		<!-- 分类标签栏 -->
 		<scroll-view class="tag-bar" scroll-x="true">
