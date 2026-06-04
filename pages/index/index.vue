@@ -120,13 +120,6 @@
     data() {
       return {
         countdown: '02:59:59',
-        countdownBackground: '#F5F5F5',
-        countdownColor: '#333333',
-
-        brandName: '大研菜场',
-        brandSubtitle: '新鲜·安心 每一天',
-        brandDesc: '源头直采·新鲜到家',
-        buttonText: '立即选购',
 
         vipLevel: 'V1',
         isLogin: false,
@@ -149,8 +142,6 @@
         selectedCount: 0,
         selectedTotal: '0.00',
 
-        groupTitle: '新鲜好菜 团购更优惠',
-        groupSubtitle: '当日下单·次日取货',
         currentSwiper: 0
       }
     },
@@ -335,10 +326,6 @@
           p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
         });
         this.updateSelectedTotal();
-      },
-
-      onShopNow() {
-        uni.navigateTo({ url: '/pages/category/index' })
       },
 
       onViewMore() {

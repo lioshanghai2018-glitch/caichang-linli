@@ -43,10 +43,6 @@ export function updateCartItem(id, quantity) {
   return cart
 }
 
-export function getMaxQty() {
-  return MAX_QTY_PER_ITEM
-}
-
 export function removeFromCart(id) {
   const cart = getCartItems().filter(item => item.id !== id)
   saveCartItems(cart)

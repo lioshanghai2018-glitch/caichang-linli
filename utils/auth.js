@@ -48,10 +48,6 @@ export function getMerchantId() {
   return _merchantBootPromise
 }
 
-export function getToken() {
-  return uni.getStorageSync(STORAGE_KEYS.TOKEN) || ''
-}
-
 export function logout() {
   uni.removeStorageSync(STORAGE_KEYS.TOKEN)
   uni.removeStorageSync(STORAGE_KEYS.USER_ID)

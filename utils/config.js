@@ -16,12 +16,6 @@ const ORDER_STATUS = {
   REFUNDED: 'refunded'
 }
 
-const PRODUCT_STATUS = {
-  ONLINE: 'online',
-  OFFLINE: 'offline',
-  SOLD_OUT: 'sold_out'
-}
-
 const ORDER_STATUS_TEXT = {
   pending_payment: '待付款',
   paid: '已付款',
@@ -35,11 +29,6 @@ const ORDER_STATUS_TEXT = {
   refunded: '已退款'
 }
 
-const POLL_INTERVAL = {
-  ORDER_DETAIL: 8000,
-  CART_REFRESH: 15000
-}
-
 const STORAGE_KEYS = {
   TOKEN: 'uni_id_token',
   TOKEN_EXPIRED: 'uni_id_token_expired',
@@ -51,12 +40,8 @@ const STORAGE_KEYS = {
 }
 
 export {
-  BASE_URL,
-  CLOUD_OBJECT,
   API_BASE,
   ORDER_STATUS,
-  PRODUCT_STATUS,
   ORDER_STATUS_TEXT,
-  POLL_INTERVAL,
   STORAGE_KEYS
 }

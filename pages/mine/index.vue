@@ -217,9 +217,6 @@
 				}
 				uni.navigateTo({ url: '/pages/settings/profile' })
 			},
-			goLogin() {
-				uni.navigateTo({ url: '/pages/login/index' })
-			},
 			async goOrder() {
 				if (!await requireLogin()) return
 				uni.switchTab({ url: '/pages/order/index' })

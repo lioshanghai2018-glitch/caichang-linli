@@ -149,11 +149,6 @@ function fallbackBase64(tempFilePath, cloudPath) {
   })
 }
 
-// 检查是否已认证（userId 忽略，由云端从 token 解析）
-export const checkCert = (userId) => {
-  return request('checkCert', {})
-}
-
 // ==================== 本地认证状态管理 ====================
 
 // 获取本地认证状态
@@ -169,12 +164,6 @@ export const saveLocalCertStatus = (status, data = {}) => {
   if (data.rejectReason) uni.setStorageSync('cert_reject_reason', data.rejectReason)
 }
 
-// 检查是否可以发帖
-export const canPublish = () => {
-  const status = getLocalCertStatus()
-  return status === 'certified'
-}
-
 // ==================== 辅助函数 ====================
 
 export const formatRelativeTime = (isoString) => {
@@ -187,9 +176,4 @@ export const formatRelativeTime = (isoString) => {
   if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前'
   if (diff < 604800000) return Math.floor(diff / 86400000) + '天前'
   return date.toLocaleDateString()
-}
-
-// 验证手机号
-export const validatePhone = (phone) => {
-  return /^1\d{10}$/.test(phone)
 }

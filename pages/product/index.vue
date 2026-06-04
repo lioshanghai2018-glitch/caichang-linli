@@ -57,7 +57,6 @@
 </template>
 
 <script>
-import { getProductById } from '@/utils/product.js'
 import { addToCart, getCartItems } from '@/utils/cart.js'
 
 export default {

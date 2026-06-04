@@ -121,7 +121,6 @@
 				categories: [],
 				productsLoading: false,
 				products: [],
-				scrollTop: 0,
 				scrollIntoViewId: ''
 			};
 		},
