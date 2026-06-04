@@ -99,6 +99,14 @@
 			}
 		},
 		{
+			"path": "pages/settings/profile",
+			"style": {
+				"navigationBarTitleText": "用户设置",
+				"navigationBarBackgroundColor": "#F5F1EB",
+				"navigationBarTextStyle": "black"
+			}
+		},
+		{
 			"path": "pages/history/index",
 			"style": {
 				"navigationBarTitleText": "浏览记录",
@@ -143,6 +151,14 @@
 			"style": {
 				"navigationBarTitleText": "用户协议",
 				"navigationBarBackgroundColor": "#FFFFFF",
+				"navigationBarTextStyle": "black"
+			}
+		},
+		{
+			"path": "pages/login/index",
+			"style": {
+				"navigationBarTitleText": "登录",
+				"navigationBarBackgroundColor": "#F5F1EB",
 				"navigationBarTextStyle": "black"
 			}
 		}

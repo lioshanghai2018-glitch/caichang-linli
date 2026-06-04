@@ -27,22 +27,6 @@
 				<text class="reject-text">{{ rejectReason || '资料不符合要求，请重新上传' }}</text>
 			</view>
 
-			<!-- 身份证上传 -->
-			<view class="upload-item">
-				<view class="upload-header">
-					<text class="upload-label">身份证照片</text>
-					<text class="upload-required">*必填</text>
-				</view>
-				<text class="upload-hint">请上传清晰可辨认的身份证正面照片</text>
-				<view class="upload-box" @tap="uploadIdCard">
-					<image v-if="idCardUrl" :src="idCardUrl" mode="aspectFill" class="upload-img" />
-					<view v-else class="upload-placeholder">
-						<text class="icon-plus">+</text>
-						<text class="upload-tip">上传身份证</text>
-					</view>
-				</view>
-			</view>
-
 			<!-- 账单凭证上传 -->
 			<view class="upload-item">
 				<view class="upload-header">
@@ -128,7 +112,7 @@
 			<text class="tips-title">认证说明</text>
 			<view class="tips-list">
 				<text class="tips-item">1. 认证仅限小区真实住户</text>
-				<text class="tips-item">2. 身份证和地址证明需为同一人</text>
+				<text class="tips-item">2. 地址证明需真实、地址清晰可辨</text>
 				<text class="tips-item">3. 您的信息仅用于身份核实，绝不对外泄露</text>
 				<text class="tips-item">4. 认证成功后可发布帖子、参与社区互动</text>
 			</view>
@@ -137,13 +121,13 @@
 </template>
 
 <script>
-import { getCertStatus, submitCert, getLocalCertStatus, saveLocalCertStatus } from '@/utils/neighbor-api.js'
+import { getCertStatus, submitCert, uploadCertImage, getLocalCertStatus, saveLocalCertStatus, resetMyCert } from '@/utils/neighbor-api.js'
+import { getUserId } from '@/utils/auth.js'
 
 export default {
 	data() {
 		return {
 			certStatus: 'none',
-			idCardUrl: '',
 			billUrl: '',
 			agreed: false,
 			rejectReason: '',
@@ -177,10 +161,14 @@ export default {
 			return descs[this.certStatus] || ''
 		},
 		canSubmit() {
-			return this.idCardUrl && this.billUrl && this.agreed
+			return this.billUrl && this.agreed
 		}
 	},
 	onLoad() {
+		this.loadCertStatus()
+	},
+	onShow() {
+		// 从其他页面返回时重新拉一次云端，避免本地脏数据掩盖商家审核结果
 		this.loadCertStatus()
 	},
 	methods: {
@@ -196,11 +184,10 @@ export default {
 			this.submitTime = uni.getStorageSync('cert_submit_time') || ''
 			this.certId = uni.getStorageSync('cert_id') || ''
 			this.certTime = uni.getStorageSync('cert_time') || ''
-			this.idCardUrl = uni.getStorageSync('cert_id_card') || ''
 			this.billUrl = uni.getStorageSync('cert_bill') || ''
 
 			// 尝试从API获取最新状态
-			const userId = uni.getStorageSync('userId') || Date.now().toString()
+			const userId = getUserId() || Date.now().toString()
 			getCertStatus(userId).then(res => {
 				if (res.data) {
 					this.certStatus = res.data.status
@@ -210,17 +197,6 @@ export default {
 					saveLocalCertStatus(res.data.status, res.data)
 				}
 			}).catch(() => {})
-		},
-		uploadIdCard() {
-			uni.chooseImage({
-				count: 1,
-				sizeType: ['compressed'],
-				sourceType: ['album', 'camera'],
-				success: (res) => {
-					this.idCardUrl = res.tempFilePaths[0]
-					uni.setStorageSync('cert_id_card', this.idCardUrl)
-				}
-			})
 		},
 		uploadBill() {
 			uni.chooseImage({
@@ -246,9 +222,7 @@ export default {
 		},
 		async submitCert() {
 			if (!this.canSubmit) {
-				if (!this.idCardUrl) {
-					uni.showToast({ title: '请上传身份证照片', icon: 'none' })
-				} else if (!this.billUrl) {
+				if (!this.billUrl) {
 					uni.showToast({ title: '请上传地址证明', icon: 'none' })
 				} else if (!this.agreed) {
 					uni.showToast({ title: '请阅读并同意认证协议', icon: 'none' })
@@ -258,42 +232,50 @@ export default {
 
 			uni.showLoading({ title: '上传中...' })
 
-			const userId = uni.getStorageSync('userId') || Date.now().toString()
-			let idCardCloudUrl = this.idCardUrl
+			const userId = getUserId() || Date.now().toString()
 			let billCloudUrl = this.billUrl
 
-			// 上传身份证到云存储
-			if (this.idCardUrl && this.idCardUrl.startsWith('http://tmp/')) {
+			// 上传账单到云存储
+			// billUrl 可能是 wxfile://tmp/、http://tmp/、cloud://（已上传过） 三种之一
+			// - cloud:// 开头：已上传过，直接用
+			// - 其他任意本地临时路径：触发上传（uniCloud 直传优先，失败降级 base64）
+			if (this.billUrl && !this.billUrl.startsWith('cloud://')) {
+				console.log('[cert] billUrl local path, try upload:', this.billUrl)
 				try {
-					const idCardRes = await uniCloud.uploadFile({
-						filePath: this.idCardUrl,
-						cloudPath: `certs/${userId}_idcard_${Date.now()}.jpg`
-					})
-					idCardCloudUrl = idCardRes.fileID
+					const res = await uploadCertImage(this.billUrl, `certs/${userId}_bill_${Date.now()}.jpg`)
+					console.log('[cert] uploadCertImage result:', res)
+					if (res && res.data && res.data.fileID) {
+						billCloudUrl = res.data.fileID
+					} else {
+						throw new Error((res && res.msg) || '返回无 fileID')
+					}
 				} catch (e) {
-					console.log('身份证上传失败，使用原路径')
+					console.error('[cert] bill upload failed:', e)
+					uni.hideLoading()
+					uni.showToast({ title: '账单上传失败：' + ((e && (e.msg || e.message)) || '请重试'), icon: 'none', duration: 3000 })
+					return
 				}
 			}
 
-			// 上传账单到云存储
-			if (this.billUrl && this.billUrl.startsWith('http://tmp/')) {
-				try {
-					const billRes = await uniCloud.uploadFile({
-						filePath: this.billUrl,
-						cloudPath: `certs/${userId}_bill_${Date.now()}.jpg`
-					})
-					billCloudUrl = billRes.fileID
-				} catch (e) {
-					console.log('账单上传失败，使用原路径')
-				}
+			// 兜底：上传后必须是非本地路径（cloud:// 是规范形式；https:// 是 SDK 直传的临时 URL，
+			// 也会被商家端 resolveFileIdsInItems 当作原样 URL 渲染。任一即可）
+			if (!billCloudUrl
+				|| billCloudUrl === this.billUrl
+				|| (!billCloudUrl.startsWith('cloud://') && !billCloudUrl.startsWith('http'))) {
+				uni.hideLoading()
+				uni.showToast({ title: '账单图未上传到云端，请重试', icon: 'none' })
+				return
 			}
 
 			uni.showLoading({ title: '提交中...' })
 
+			// 姓名/手机号从本地用户信息取，商家审核页要显示
+			// user_info 存的是登录返回的 userInfo 完整对象（uni-id 字段是 nickname；自建 users 表是 phone）
+			const userInfo = uni.getStorageSync('user_info') || {}
 			const certData = {
 				userId: userId,
-				userName: uni.getStorageSync('userName') || '邻居',
-				idCardUrl: idCardCloudUrl,
+				userName: userInfo.nickname || uni.getStorageSync('userName') || '邻居',
+				phone: uni.getStorageSync('user_phone') || userInfo.mobile || userInfo.phone || '',
 				billUrl: billCloudUrl,
 				submitTime: new Date().toISOString()
 			}
@@ -325,7 +307,6 @@ export default {
 			// 保存本地状态
 			saveLocalCertStatus('pending', {
 				submitTime: new Date().toLocaleString('zh-CN'),
-				idCardUrl: idCardCloudUrl,
 				billUrl: billCloudUrl
 			})
 			this.certStatus = 'pending'
@@ -334,20 +315,26 @@ export default {
 				uni.navigateBack()
 			}, 1000)
 		},
-		reCert() {
-			uni.showModal({
+		async reCert() {
+			const ok = await new Promise(r => uni.showModal({
 				title: '重新认证',
 				content: '重新认证将清除当前认证状态，确定要继续吗？',
-				success: (res) => {
-					if (res.confirm) {
-						saveLocalCertStatus('none')
-						this.certStatus = 'none'
-						this.idCardUrl = ''
-						this.billUrl = ''
-						this.agreed = false
-					}
-				}
-			})
+				success: s => r(s.confirm)
+			}))
+			if (!ok) return
+			const userId = getUserId() || Date.now().toString()
+			try {
+				// 先调云端把 DB 状态清回 'none'，否则下次提交会被 submitCert 拒绝（pending/certified 状态）
+				await resetMyCert(userId)
+			} catch (e) {
+				console.error('[cert] resetMyCert failed:', e)
+				uni.showToast({ title: '重置失败：' + (e.msg || '请重试'), icon: 'none' })
+				return
+			}
+			saveLocalCertStatus('none')
+			this.certStatus = 'none'
+			this.billUrl = ''
+			this.agreed = false
 		}
 	}
 }

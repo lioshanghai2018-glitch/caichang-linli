@@ -64,20 +64,25 @@
 
 <script>
 import { getAddressList, deleteAddress } from '@/utils/address.js'
+import { requireLogin, isLoggedIn } from '@/utils/auth.js'
 
 export default {
   data() {
     return {
       selectedId: '',
       addressList: [],
-      isManageMode: false
+      isManageMode: false,
+      isLogin: false
     }
   },
-  onLoad() {
+  async onLoad() {
+    this.isLogin = isLoggedIn()
+    if (!await requireLogin()) return
     this.loadAddresses()
   },
   onShow() {
-    this.loadAddresses()
+    this.isLogin = isLoggedIn()
+    if (this.isLogin) this.loadAddresses()
   },
   methods: {
     goBack() {

@@ -113,6 +113,9 @@
 </template>
 
 <script>
+  import { isLoggedIn, getMyUserInfo } from '@/utils/auth.js'
+  import { STORAGE_KEYS } from '@/utils/config.js'
+
   export default {
     data() {
       return {
@@ -125,8 +128,9 @@
         brandDesc: '源头直采·新鲜到家',
         buttonText: '立即选购',
 
-        greeting: 'Hi,亲爱的邻居',
         vipLevel: 'V1',
+        isLogin: false,
+        userInfo: {},
 
         quickActions: [
           {
@@ -148,14 +152,26 @@
         selectedTotal: '0.00',
 
         groupTitle: '新鲜好菜 团购更优惠',
-        groupSubtitle: '当日下单·次日自提',
+        groupSubtitle: '当日下单·次日取货',
         currentSwiper: 0
+      }
+    },
+
+    computed: {
+      greeting() {
+        if (this.isLogin && this.userInfo.nickname) return 'Hi,' + this.userInfo.nickname
+        return 'Hi,亲爱的邻居'
       }
     },
 
     onLoad() {
       this.startCountdown();
       this.loadFlashSaleProducts();
+    },
+
+    onShow() {
+      this.syncAllCart();
+      this.loadUserInfo();
     },
 
     onShow() {
@@ -275,6 +291,8 @@
               cartItems[existIndex].quantity = p.quantity;
             } else {
               cartItems.push({
+                productId: p.id,
+                id: p.id,
                 name: p.name,
                 spec: p.weight,
                 image: p.image,
@@ -328,7 +346,26 @@
       },
 
       goMine() {
+        if (!isLoggedIn()) {
+          uni.navigateTo({ url: '/pages/login/index' })
+          return
+        }
         uni.switchTab({ url: '/pages/mine/index' })
+      },
+
+      async loadUserInfo() {
+        this.isLogin = isLoggedIn()
+        if (!this.isLogin) {
+          this.userInfo = {}
+          return
+        }
+        try {
+          const fresh = await getMyUserInfo()
+          if (fresh) this.userInfo = fresh
+          else this.userInfo = uni.getStorageSync(STORAGE_KEYS.USER_INFO) || {}
+        } catch (e) {
+          this.userInfo = uni.getStorageSync(STORAGE_KEYS.USER_INFO) || {}
+        }
       },
 
       goCategory() {

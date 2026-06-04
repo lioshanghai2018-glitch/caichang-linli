@@ -1,5 +1,13 @@
 <template>
 	<view class="page">
+		<!-- 未登录：全页 CTA -->
+		<view v-if="!isLogin" class="login-cta">
+			<text class="login-icon">🔒</text>
+			<text class="login-title">查看订单需要登录</text>
+			<text class="login-sub">订单信息包含收货地址、电话等隐私</text>
+			<view class="login-btn" @tap="goLogin"><text>微信一键登录</text></view>
+		</view>
+		<block v-else>
 		<!-- 顶部Tab切换 -->
 		<view class="tab-bar">
 			<view
@@ -18,12 +26,9 @@
 			</view>
 		</view>
 
-		<!-- 历史订单：右上角清空按钮（仅在历史 tab 且有订单时显示） -->
+		<!-- 历史订单计数（仅在历史 tab 且有订单时显示） -->
 		<view class="history-toolbar" v-if="currentTab === 1 && historyOrders.length > 0">
 			<text class="history-count">共 {{ historyOrders.length }} 单</text>
-			<view class="clear-history-btn" @tap="clearAllHistory">
-				<text>清空历史</text>
-			</view>
 		</view>
 
 		<!-- 当前订单列表 -->
@@ -217,11 +222,13 @@
 			</view>
 		</scroll-view>
 		<custom-tabbar :current="2" />
+		</block>
 	</view>
 </template>
 
 <script>
 import { ORDER_STATUS, ORDER_STATUS_TEXT, STORAGE_KEYS } from '@/utils/config.js'
+import { requireLogin, isLoggedIn } from '@/utils/auth.js'
 
 // 旧数据兼容：把历史写入的中文/旧英文 status 归一为新枚举
 const LEGACY_TO_CANONICAL = {
@@ -267,10 +274,12 @@ export default {
 			userId: 'user_' + (uni.getStorageSync('userId') || Date.now()),
 			loading: false,
 			refreshing: false,
-			isRefreshing: false // 防重标志
+			isRefreshing: false, // 防重标志
+			isLogin: false // 订单页强制登录
 		}
 	},
 	onShow() {
+		this.isLogin = isLoggedIn()
 		// 生成用户ID并存储
 		if (!uni.getStorageSync('userId')) {
 			uni.setStorageSync('userId', this.userId.replace('user_', ''))
@@ -429,6 +438,7 @@ export default {
 			return String(id).slice(-5) || '-----'
 		},
 		async cancelOrder(order) {
+			if (!await requireLogin()) return
 			// 自提单：已分拣 / 待自提阶段，商家已备货，不能直接 cancel，要走退款申请
 			const isSelf = this.isSelfPickup(order)
 			const s = this.toCanonical(order.status)
@@ -458,6 +468,7 @@ export default {
 			})
 		},
 		async afterSale(order) {
+			if (!await requireLogin()) return
 			uni.showModal({
 				title: '申请售后',
 				content: '请输入退款原因',
@@ -530,7 +541,11 @@ export default {
 		isSelfPickup(order) {
 			return order && order.deliveryType === 'self'
 		},
+		goLogin() {
+			uni.navigateTo({ url: '/pages/login/index' })
+		},
 		async confirmPickup(order) {
+			if (!await requireLogin()) return
 			const orderId = this.orderKey(order)
 			if (!orderId) {
 				uni.showToast({ title: '订单号缺失', icon: 'none' })
@@ -580,28 +595,6 @@ export default {
 					}
 				}
 			})
-		},
-		clearAllHistory() {
-			uni.showModal({
-				title: '清空历史订单',
-				content: '将清空所有历史订单（云端），此操作不可恢复，是否继续？',
-				confirmText: '一键清空',
-				confirmColor: '#ff4d4f',
-				success: async (res) => {
-					if (!res.confirm) return
-					const targets = (this.historyOrders || []).map(o => this.orderKey(o)).filter(Boolean)
-					uni.showLoading({ title: '清空中...' })
-					// 云端一条条删
-					for (const oid of targets) {
-						try {
-							await this.callAPI('deleteOrder', { orderNo: oid })
-						} catch (e) {}
-					}
-					uni.hideLoading()
-					uni.showToast({ title: '已清空', icon: 'success' })
-					this.loadFromCloud()
-				}
-			})
 		}
 	}
 }
@@ -639,19 +632,6 @@ export default {
 	font-size: 24rpx;
 	color: #999999;
 }
-
-.clear-history-btn {
-	background-color: #FFF1F0;
-	border: 1rpx solid #FFCCC7;
-	border-radius: 8rpx;
-	padding: 6rpx 16rpx;
-}
-
-.clear-history-btn text {
-	font-size: 22rpx;
-	color: #FF4D4F;
-}
-
 .tab-item {
 	flex: 1;
 	display: flex;
@@ -686,7 +666,7 @@ export default {
 /* 订单列表 */
 .order-list {
 	flex: 1;
-	padding: 20rpx 24rpx;
+	padding: 20rpx 24rpx 140rpx;
 	box-sizing: border-box;
 	width: 100%;
 	overflow-x: hidden;
@@ -1114,4 +1094,39 @@ export default {
 .order-list ::v-deep . refresher-inner {
 	color: #4F9A42;
 }
+.login-cta {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 200rpx 60rpx 60rpx;
+}
+.login-cta .login-icon {
+	font-size: 100rpx;
+	margin-bottom: 30rpx;
+}
+.login-cta .login-title {
+	font-size: 36rpx;
+	font-weight: 600;
+	color: #2D5A27;
+	margin-bottom: 12rpx;
+}
+.login-cta .login-sub {
+	font-size: 26rpx;
+	color: #888;
+	margin-bottom: 60rpx;
+}
+.login-cta .login-btn {
+	width: 80%;
+	height: 92rpx;
+	background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+	color: #fff;
+	border-radius: 46rpx;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 30rpx;
+	font-weight: 600;
+}
+.login-cta .login-btn text { color: #fff; }
 </style>

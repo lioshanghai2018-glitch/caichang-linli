@@ -94,10 +94,10 @@ export default {
         this.product = { ...found }
       } else {
         const mockProducts = [
-          { id: '1', name: '有机西红柿', desc: '自然成熟·酸甜可口', spec: '约500g/份', image: '/static/images/有机西红柿.png', originalPrice: '¥12.80', currentPrice: '¥8.80', service: '当日下单·次日自提', stock: 100 },
-          { id: '2', name: '新鲜鸡蛋', desc: '农家散养·营养健康', spec: '10枚/盒', image: '/static/images/新鲜鸡蛋.png', originalPrice: '¥15.00', currentPrice: '¥9.90', service: '当日下单·次日自提', stock: 50 },
-          { id: '3', name: '有机青菜', desc: '新鲜直采·产地直发', spec: '约300g/份', image: '/static/images/有机青菜.png', originalPrice: '¥6.00', currentPrice: '¥3.80', service: '当日下单·次日自提', stock: 200 },
-          { id: '4', name: '胡萝卜', desc: '新鲜胡萝卜', spec: '约400g/份', image: '/static/images/胡萝卜.png', originalPrice: '¥5.00', currentPrice: '¥2.90', service: '当日下单·次日自提', stock: 150 }
+          { id: '1', name: '有机西红柿', desc: '自然成熟·酸甜可口', spec: '约500g/份', image: '/static/images/有机西红柿.png', originalPrice: '¥12.80', currentPrice: '¥8.80', service: '当日下单·次日取货', stock: 100 },
+          { id: '2', name: '新鲜鸡蛋', desc: '农家散养·营养健康', spec: '10枚/盒', image: '/static/images/新鲜鸡蛋.png', originalPrice: '¥15.00', currentPrice: '¥9.90', service: '当日下单·次日取货', stock: 50 },
+          { id: '3', name: '有机青菜', desc: '新鲜直采·产地直发', spec: '约300g/份', image: '/static/images/有机青菜.png', originalPrice: '¥6.00', currentPrice: '¥3.80', service: '当日下单·次日取货', stock: 200 },
+          { id: '4', name: '胡萝卜', desc: '新鲜胡萝卜', spec: '约400g/份', image: '/static/images/胡萝卜.png', originalPrice: '¥5.00', currentPrice: '¥2.90', service: '当日下单·次日取货', stock: 150 }
         ]
         const defaultProduct = mockProducts.find(p => p.id == this.productId) || mockProducts[0]
         this.product = { ...defaultProduct }

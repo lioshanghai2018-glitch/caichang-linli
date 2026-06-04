@@ -103,6 +103,7 @@
 
 <script>
 import { getPostDetail, toggleLike, toggleFollow, getComments, createComment } from '@/utils/neighbor-api.js'
+import { requireLogin } from '@/utils/auth.js'
 
 export default {
   data() {
@@ -172,6 +173,7 @@ export default {
     },
 
     async toggleLike() {
+      if (!await requireLogin()) return
       try {
         await toggleLike(this.postId, this.userId)
       } catch (e) {}
@@ -180,6 +182,7 @@ export default {
     },
 
     async toggleFollow() {
+      if (!await requireLogin()) return
       try {
         await toggleFollow(this.post.authorId, this.userId)
       } catch (e) {}
@@ -203,6 +206,7 @@ export default {
     },
 
     async submitComment() {
+      if (!await requireLogin()) return
       if (!this.commentText.trim()) {
         uni.showToast({ title: '请输入评论内容', icon: 'none' })
         return

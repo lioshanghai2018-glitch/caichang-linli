@@ -77,6 +77,8 @@
 </template>
 
 <script>
+import { requireLogin } from '@/utils/auth.js'
+
 export default {
   data() {
     return {
@@ -170,7 +172,8 @@ export default {
     goCategory() {
       uni.switchTab({ url: '/pages/category/index' })
     },
-    goCheckout() {
+    async goCheckout() {
+      if (!await requireLogin()) return
       if (this.selectedCount === 0) {
         uni.showToast({ title: '请选择商品', icon: 'none' })
         return

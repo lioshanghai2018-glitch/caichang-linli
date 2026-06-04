@@ -11,7 +11,7 @@ const allProducts = [
     image: '/static/images/有机西红柿.png',
     originalPrice: '¥12.80',
     currentPrice: '¥8.80',
-    service: '当日下单·次日自提',
+    service: '当日下单·次日取货',
     stock: 100
   },
   {
@@ -22,7 +22,7 @@ const allProducts = [
     image: '/static/images/新鲜鸡蛋.png',
     originalPrice: '¥15.00',
     currentPrice: '¥9.90',
-    service: '当日下单·次日自提',
+    service: '当日下单·次日取货',
     stock: 50
   },
   {
@@ -33,7 +33,7 @@ const allProducts = [
     image: '/static/images/有机青菜.png',
     originalPrice: '¥6.00',
     currentPrice: '¥3.80',
-    service: '当日下单·次日自提',
+    service: '当日下单·次日取货',
     stock: 200
   },
   {
@@ -44,7 +44,7 @@ const allProducts = [
     image: '/static/images/胡萝卜.png',
     originalPrice: '¥5.00',
     currentPrice: '¥2.90',
-    service: '当日下单·次日自提',
+    service: '当日下单·次日取货',
     stock: 150
   },
   {
@@ -55,7 +55,7 @@ const allProducts = [
     image: '/static/images/胡萝卜.png',
     originalPrice: '¥9.00',
     currentPrice: '¥6.50',
-    service: '当日下单·次日自提',
+    service: '当日下单·次日取货',
     stock: 80
   }
 ]

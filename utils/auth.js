@@ -30,6 +30,24 @@ export function getUserId() {
   return uni.getStorageSync(STORAGE_KEYS.USER_ID) || ''
 }
 
+// 取得当前商家 ID（用户端 IM 用）。
+// 单商家场景：先读缓存，没有就调 merchantAutoLogin 拿唯一商家的 _id
+let _merchantBootPromise = null
+export function getMerchantId() {
+  const cached = uni.getStorageSync('merchant_id')
+  if (cached) return Promise.resolve(cached)
+  if (_merchantBootPromise) return _merchantBootPromise
+  _merchantBootPromise = callCloud('merchantAutoLogin', {})
+    .then(res => {
+      const mid = res && res.data && res.data.merchantId
+      if (mid) uni.setStorageSync('merchant_id', mid)
+      return mid || ''
+    })
+    .catch(() => '')
+    .finally(() => { _merchantBootPromise = null })
+  return _merchantBootPromise
+}
+
 export function getToken() {
   return uni.getStorageSync(STORAGE_KEYS.TOKEN) || ''
 }
@@ -86,6 +104,70 @@ export async function sendSmsCode(phone) {
   return callCloud('sendSmsCode', { phone })
 }
 
+// ==================== 微信登录 ====================
+
+export async function loginByWeixin(code) {
+  const res = await callCloud('loginByWeixin', { code })
+  if (res.data && res.data.token) {
+    uni.setStorageSync(STORAGE_KEYS.TOKEN, res.data.token)
+    uni.setStorageSync(STORAGE_KEYS.TOKEN_EXPIRED, res.data.tokenExpired)
+    if (res.data.userInfo) {
+      uni.setStorageSync(STORAGE_KEYS.USER_ID, res.data.userInfo._id)
+      uni.setStorageSync(STORAGE_KEYS.USER_INFO, res.data.userInfo)
+    }
+  }
+  return res.data
+}
+
+export async function bindWxPhone(code) {
+  const res = await callCloud('bindWxPhone', { code })
+  if (res.data && res.data.userInfo) {
+    // 合并场景下 userId 会切换，同步刷新 storage
+    uni.setStorageSync(STORAGE_KEYS.USER_ID, res.data.userInfo._id)
+    uni.setStorageSync(STORAGE_KEYS.USER_INFO, res.data.userInfo)
+  }
+  return res.data
+}
+
+export async function updateProfile(data) {
+  const res = await callCloud('updateProfile', data)
+  if (res.data && res.data.userInfo) {
+    uni.setStorageSync(STORAGE_KEYS.USER_INFO, res.data.userInfo)
+  }
+  return res.data
+}
+
+export async function getMyUserInfo() {
+  const userId = getUserId()
+  if (!userId) return null
+  const res = await callCloud('getMyUserInfo', { userId })
+  if (res.data && res.data.userInfo) {
+    uni.setStorageSync(STORAGE_KEYS.USER_INFO, res.data.userInfo)
+    return res.data.userInfo
+  }
+  return null
+}
+
+// ==================== 按需登录拦截 ====================
+
+// 统一方法：未登录时弹模态，确认后跳登录页，返回 Promise<boolean>
+// 调用方：async onAction() { if (!await requireLogin()) return; ... }
+export function requireLogin() {
+  if (isLoggedIn()) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    uni.showModal({
+      title: '需要登录',
+      content: '该功能需要登录后使用',
+      confirmText: '去登录',
+      cancelText: '再看看',
+      success: (res) => {
+        if (res.confirm) uni.navigateTo({ url: '/pages/login/index' })
+        resolve(false)
+      }
+    })
+  })
+}
+
 // 测试模式：跳过登录（仅 H5 / App 开发用，不编译进小程序发布包）
 // #ifdef H5 || APP-PLUS
 export function loginAsTest(userId) {
@@ -94,11 +176,3 @@ export function loginAsTest(userId) {
   uni.setStorageSync(STORAGE_KEYS.USER_INFO, { nickname: '测试用户', mode: 'test' })
 }
 // #endif
-
-export function requireLogin() {
-  if (!isLoggedIn()) {
-    uni.reLaunch({ url: '/pages/login/index' })
-    return false
-  }
-  return true
-}

@@ -154,6 +154,7 @@
 <script>
 import { STORAGE_KEYS } from '@/utils/config.js'
 import { request } from '@/utils/request.js'
+import { requireLogin } from '@/utils/auth.js'
 export default {
   data() {
     return {
@@ -205,6 +206,8 @@ export default {
           const orig = p.originalPrice ? String(p.originalPrice).replace("¥", "") : null;
           const curr = String(p.currentPrice || p.originalPrice || "0").replace("¥", "");
           arr.push({
+            productId: p.productId || p.id || null,
+            id: p.id || p.productId || null,
             name: p.name || "未知商品",
             spec: p.spec || p.desc || "",
             image: p.image || "",
@@ -227,6 +230,8 @@ export default {
           const orig = p.originalPrice ? String(p.originalPrice).replace("¥", "") : null;
           const curr = String(p.currentPrice || p.originalPrice || "0").replace("¥", "");
           arr.push({
+            productId: p.productId || p.id || null,
+            id: p.id || p.productId || null,
             name: p.name || "未知商品",
             spec: p.spec || p.desc || "",
             image: p.image || "",
@@ -281,7 +286,8 @@ export default {
         }
       });
     },
-    handlePay() {
+    async handlePay() {
+      if (!await requireLogin()) return
       if (this.selectedProducts.length === 0) {
         uni.showToast({ title: '请选择商品', icon: 'none' })
         return
@@ -384,9 +390,13 @@ export default {
         // #ifdef H5
         console.error('[dev] 云端订单创建失败:', e)
         // #endif
+        // 完整错误信息：方便定位是库存不足、网络问题、还是云函数 500
+        const detail = e && (e.msg || e.message)
+          ? (e.msg || e.message)
+          : (typeof e === 'object' ? JSON.stringify(e).slice(0, 200) : String(e))
         uni.showModal({
           title: '订单创建失败',
-          content: (e && (e.msg || e.message)) || '网络异常，请重试',
+          content: detail,
           showCancel: false,
           confirmText: '我知道了'
         })

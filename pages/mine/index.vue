@@ -2,21 +2,35 @@
 	<scroll-view class="page" scroll-y="true">
 		<!-- 顶部用户信息区 -->
 		<view class="user-header">
-			<view class="user-info">
-				<!-- 头像 -->
-				<view class="avatar">
-					<view class="avatar-head"></view>
-					<view class="avatar-body"></view>
-				</view>
-				<!-- 文字区 -->
-				<view class="user-text">
-					<view class="user-name-row">
-						<text class="user-name">Hi，亲爱的邻居</text>
-						<view class="vip-tag"><text>{{ currentLevel }}</text></view>
+			<view class="user-info" @tap="onHeaderTap">
+				<!-- 已登录：真实头像/昵称/手机号 -->
+				<template v-if="isLogin">
+					<image v-if="avatarUrl" class="avatar-real" :src="avatarUrl" mode="aspectFill" @error="avatarUrl = ''" />
+					<view v-else class="avatar-placeholder">
+						<text class="avatar-plus">+</text>
 					</view>
-					<text class="user-phone">188 **** 5678</text>
-					<text class="user-subtitle">源头直采·新鲜到家</text>
-				</view>
+					<view class="user-text">
+						<view class="user-name-row">
+							<text class="user-name">{{ userInfo.nickname ? 'Hi,' + userInfo.nickname : 'Hi,亲爱的邻居' }}</text>
+							<view class="vip-tag"><text>{{ currentLevel }}</text></view>
+						</view>
+						<text class="user-phone">{{ maskedPhone || '未绑定手机号' }}</text>
+						<text class="user-subtitle">源头直采·新鲜到家</text>
+					</view>
+				</template>
+				<!-- 未登录：点击登录 -->
+				<template v-else>
+					<view class="avatar-placeholder">
+						<text class="avatar-plus">+</text>
+					</view>
+					<view class="user-text">
+						<view class="user-name-row">
+							<text class="user-name login-tip">点击登录</text>
+						</view>
+						<text class="user-phone">登录后享受更多服务</text>
+						<text class="user-subtitle">微信一键登录</text>
+					</view>
+				</template>
 			</view>
 			<!-- 右上角 -->
 			<view class="header-right">
@@ -87,24 +101,6 @@
 
 		<!-- 功能选项列表 -->
 		<view class="option-list">
-			<!-- 认证状态卡片 -->
-			<view class="cert-card" :class="certStatus" @tap="goCert">
-				<view class="cert-left">
-					<view class="cert-icon-wrap">
-						<text class="cert-icon">{{ certIcon }}</text>
-					</view>
-					<view class="cert-info">
-						<text class="cert-title">{{ certTitle }}</text>
-						<text class="cert-desc">{{ certDesc }}</text>
-					</view>
-				</view>
-				<view class="cert-action">
-					<text class="cert-btn-text">{{ certBtnText }}</text>
-					<view class="icon-arrow"></view>
-				</view>
-			</view>
-			<view class="option-divider"></view>
-
 			<!-- 邻里社区 -->
 			<view class="option-item" @tap="goNeighbor">
 				<view class="iconfont icon-linlishequ"></view>
@@ -142,14 +138,13 @@
 			</view>
 		</view>
 
-		<!-- 蔬菜图占位区 -->
-		<view class=" veggie-placeholder"><text>蔬菜图占位</text></view>
 	</scroll-view>
 	<custom-tabbar :current="3" />
 </template>
 
 <script>
-	import { getLocalCertStatus } from '@/utils/neighbor-api.js'
+	import { isLoggedIn, requireLogin, getMyUserInfo } from '@/utils/auth.js'
+	import { STORAGE_KEYS } from '@/utils/config.js'
 
 	export default {
 		data() {
@@ -158,7 +153,11 @@
 				nextLevelGrowth: 3000,
 				currentLevel: 'V1',
 				nextLevel: 'V2',
-				certStatus: 'none'
+				isLogin: false,
+				userInfo: {},
+				avatarUrl: '',
+				maskedPhone: '',
+				defaultAvatar: 'https://img.icons8.com/color/96/user.png'
 			}
 		},
 		computed: {
@@ -167,65 +166,82 @@
 			},
 			pointsNeeded() {
 				return this.nextLevelGrowth - this.currentGrowth
-			},
-			certIcon() {
-				const icons = { none: '?', pending: '⏳', certified: '✓', rejected: '✗' }
-				return icons[this.certStatus] || '?'
-			},
-			certTitle() {
-				const titles = {
-					none: '住户认证',
-					pending: '认证审核中',
-					certified: '已认证住户',
-					rejected: '认证被拒'
-				}
-				return titles[this.certStatus] || ''
-			},
-			certDesc() {
-				const descs = {
-					none: '完成认证即可发布帖子',
-					pending: '请耐心等待审核结果',
-					certified: '可享受社区全部功能',
-					rejected: '请重新上传认证资料'
-				}
-				return descs[this.certStatus] || ''
-			},
-			certBtnText() {
-				const texts = {
-					none: '去认证',
-					pending: '查看进度',
-					certified: '已认证',
-					rejected: '重新认证'
-				}
-				return texts[this.certStatus] || ''
 			}
 		},
 		onShow() {
-			this.loadCertStatus()
+			this.loadUserInfo()
 		},
 		methods: {
-			loadCertStatus() {
-				this.certStatus = getLocalCertStatus()
+			async loadUserInfo() {
+				this.isLogin = isLoggedIn()
+				if (!this.isLogin) {
+					this.userInfo = {}
+					this.avatarUrl = ''
+					this.maskedPhone = ''
+					return
+				}
+				// 优先从云端拉最新数据，绕开 storage 缓存不一致问题
+				try {
+					const fresh = await getMyUserInfo()
+					if (fresh) this.userInfo = fresh
+					else this.userInfo = uni.getStorageSync(STORAGE_KEYS.USER_INFO) || {}
+				} catch (e) {
+					this.userInfo = uni.getStorageSync(STORAGE_KEYS.USER_INFO) || {}
+				}
+				this.maskedPhone = this.maskPhone(this.userInfo.phone || uni.getStorageSync(STORAGE_KEYS.USER_PHONE))
+				const rawAvatar = this.userInfo.avatar
+				// 没头像 或 头像就是云函数初始化时的默认图 → 当作"无头像"，显示占位符
+				if (!rawAvatar || rawAvatar === this.defaultAvatar) {
+					this.avatarUrl = ''
+				} else if (rawAvatar.startsWith('cloud://')) {
+					try {
+						const r = await uniCloud.getTempFileURL({ fileList: [rawAvatar] })
+						this.avatarUrl = (r.fileList && r.fileList[0] && r.fileList[0].tempFileURL) || ''
+					} catch (e) {
+						this.avatarUrl = ''
+					}
+				} else {
+					this.avatarUrl = rawAvatar
+				}
 			},
-			goCert() {
-				uni.navigateTo({ url: '/pages/neighbor/cert' })
+			maskPhone(phone) {
+				if (!phone) return ''
+				const s = String(phone)
+				if (s.length < 11) return s
+				return s.slice(0, 3) + ' **** ' + s.slice(7)
 			},
-			goOrder() {
+			onHeaderTap() {
+				if (!this.isLogin) {
+					uni.navigateTo({ url: '/pages/login/index' })
+					return
+				}
+				uni.navigateTo({ url: '/pages/settings/profile' })
+			},
+			goLogin() {
+				uni.navigateTo({ url: '/pages/login/index' })
+			},
+			async goOrder() {
+				if (!await requireLogin()) return
 				uni.switchTab({ url: '/pages/order/index' })
 			},
-			goAddress() {
+			async goAddress() {
+				if (!await requireLogin()) return
 				uni.navigateTo({ url: '/pages/address/index' })
 			},
-			goNeighbor() {
+			async goNeighbor() {
+				if (!await requireLogin()) return
 				uni.navigateTo({ url: '/pages/neighbor/index' })
 			},
-			goCoupon() {
+			async goCoupon() {
+				if (!await requireLogin()) return
 				uni.navigateTo({ url: '/pages/coupon/index' })
 			},
-			goService() {
+			async goService() {
+				if (!await requireLogin()) return
 				uni.navigateTo({ url: '/pages/service/index' })
 			},
-			goHistory() {
+			async goHistory() {
+				if (!await requireLogin()) return
 				uni.navigateTo({ url: '/pages/history/index' })
 			},
 			goInvite() {
@@ -257,7 +273,15 @@
 	align-items: center;
 }
 
-.avatar {
+.avatar-real {
+	width: 100rpx;
+	height: 100rpx;
+	border-radius: 50%;
+	background-color: #E8F5E9;
+	flex-shrink: 0;
+}
+
+.avatar-placeholder {
 	width: 100rpx;
 	height: 100rpx;
 	border-radius: 50%;
@@ -266,22 +290,14 @@
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
+	flex-shrink: 0;
 }
 
-.avatar-head {
-	width: 48rpx;
-	height: 48rpx;
-	border: 3rpx solid #B0BEC5;
-	border-radius: 50%;
-}
-
-.avatar-body {
-	width: 60rpx;
-	height: 30rpx;
-	border: 3rpx solid #B0BEC5;
-	border-top: none;
-	border-radius: 0 0 30rpx 30rpx;
-	margin-top: -6rpx;
+.avatar-plus {
+	font-size: 60rpx;
+	color: #B0BEC5;
+	font-weight: 200;
+	line-height: 1;
 }
 
 .user-text {
@@ -299,6 +315,10 @@
 	font-size: 26rpx;
 	font-weight: 600;
 	color: #333333;
+}
+
+.user-name.login-tip {
+	color: #4F9A42;
 }
 
 .vip-tag {
@@ -702,21 +722,5 @@
 	height: 2rpx;
 	background-color: #E0E0E0;
 	margin: 0 32rpx;
-}
-
-/* ========== 蔬菜图占位区 ========== */
-.veggie-placeholder {
-	height: 300rpx;
-	background-color: #E0E0E0;
-	border-radius: 16rpx;
-	margin: 20rpx;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.veggie-placeholder text {
-	font-size: 28rpx;
-	color: #999999;
 }
 </style>

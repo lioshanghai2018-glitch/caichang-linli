@@ -261,7 +261,7 @@
 									categoryId: String(item.categoryId || ''),
 									categoryName: item.categoryName || '',
 									desc: item.description || '新鲜直采·产地直发',
-									service: '当日下单·次日自提',
+									service: '当日下单·次日取货',
 									originalPrice: '¥' + originalPrice.toFixed(1),
 									currentPrice: '¥' + price.toFixed(1),
 									image: (item.images && item.images[0]) ? item.images[0] : '/static/images/placeholder.png',
@@ -367,6 +367,8 @@
 					return p.quantity > 0;
 				}).map(function(p) {
 					return {
+						productId: p.id,
+						id: p.id,
 						name: p.name,
 						spec: p.desc,
 						image: p.image,

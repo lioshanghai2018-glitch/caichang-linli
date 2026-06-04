@@ -83,6 +83,7 @@
 
 <script>
 import { createPost, updatePost, getPostDetail, CATEGORIES } from '@/utils/neighbor-api.js'
+import { requireLogin } from '@/utils/auth.js'
 
 export default {
 	data() {
@@ -181,6 +182,7 @@ export default {
 			return true
 		},
 		async submitPost() {
+			if (!await requireLogin()) return
 			if (!this.validateForm() || this.submitting) return
 
 			this.submitting = true

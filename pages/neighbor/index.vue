@@ -106,6 +106,7 @@
 
 <script>
 import { getPostList } from '@/utils/neighbor-api.js'
+import { requireLogin } from '@/utils/auth.js'
 
 export default {
 	data() {
@@ -141,8 +142,9 @@ export default {
 			toggleMenu() {
 				this.menuOpen = !this.menuOpen
 			},
-			onPublish() {
+			async onPublish() {
 				this.menuOpen = false
+				if (!await requireLogin()) return
 				const status = uni.getStorageSync('cert_status') || 'none'
 				if (status !== 'certified') {
 					uni.showModal({

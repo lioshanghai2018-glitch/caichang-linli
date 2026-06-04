@@ -38,25 +38,34 @@
 
 <script>
 import { createConversation, getMessages, sendMessage, markAsRead } from '@/utils/order-api'
+import { requireLogin, isLoggedIn, getMerchantId, getUserId } from '@/utils/auth.js'
 
 export default {
   data() {
     return {
       userId: '',
       userName: '',
+      merchantId: '',
       conversationId: '',
       messages: [],
       inputText: '',
       scrollTop: 9999,
       pollingTimer: null,
+      isLogin: false,
       lastTimestamp: 0,
       inited: false
     }
   },
-  onLoad() {
+  async onLoad() {
+    this.isLogin = isLoggedIn()
+    if (!await requireLogin()) return
     const userInfo = uni.getStorageSync('userInfo') || {}
-    this.userId = userInfo.userId || 'guest_' + Date.now()
+    // 取真 userId：优先从 STORAGE_KEYS.USER_ID 这个 key 读（login 时存的真 _id），
+    // 兜底从 userInfo 对象里取
+    this.userId = getUserId() || userInfo._id || userInfo.userId || ('guest_' + Date.now())
     this.userName = userInfo.nickname || userInfo.userName || '用户'
+    // 自动 bootstrap 商家 ID（与商家端一致，不再硬编码 'default'）
+    this.merchantId = await getMerchantId()
     this.initConversation()
   },
   onShow() {
@@ -72,10 +81,10 @@ export default {
   },
   methods: {
     async initConversation() {
-      console.log('开始初始化会话, userId:', this.userId, 'userName:', this.userName)
+      console.log('开始初始化会话, userId:', this.userId, 'userName:', this.userName, 'merchantId:', this.merchantId)
       try {
         const res = await createConversation({
-          merchantId: 'default',
+          merchantId: this.merchantId,
           userId: this.userId,
           userName: this.userName
         })
@@ -119,6 +128,7 @@ export default {
       try {
         await sendMessage({
           conversationId: this.conversationId,
+          merchantId: this.merchantId,
           senderId: this.userId,
           senderType: 'user',
           senderName: this.userName,
