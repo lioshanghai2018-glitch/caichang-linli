@@ -22,10 +22,10 @@
 		<!-- 优惠插图轮播 -->
 		<swiper class="promo-swiper" circular="true" @change="onPromoChange">
 			<swiper-item>
-				<image class="promo-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+				<image class="promo-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/shucailan.jpg" mode="aspectFill"></image>
 			</swiper-item>
 			<swiper-item>
-				<image class="promo-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+				<image class="promo-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/shucailan.jpg" mode="aspectFill"></image>
 			</swiper-item>
 		</swiper>
 		<view class="promo-indicators">
@@ -121,26 +121,61 @@
 				categories: [],
 				productsLoading: false,
 				products: [],
+				flashSaleProducts: [],
 				scrollIntoViewId: ''
 			};
 		},
 		computed: {
 			productsWithHeader: function() {
 				var result = [];
-				var lastCatName = '';
-				for (var i = 0; i < this.products.length; i++) {
-					var p = this.products[i];
-					if (p.categoryName !== lastCatName && p.categoryName) {
-						result.push({ isHeader: true, categoryName: p.categoryName });
-						lastCatName = p.categoryName;
+				// 1. 固定首项：团购特惠（与首页数据保持一致）
+				result.push({ isHeader: true, categoryName: '团购特惠' });
+				this.flashSaleProducts.forEach(function(p) { result.push(p); });
+				// 2. 云端分类（跳过固定项）
+				var byId = {}, byName = {};
+				this.categories.forEach(function(c) {
+					if (c.isFixed) return;
+					if (c._id) byId[String(c._id)] = c;
+					if (c.name) byName[c.name] = c;
+				});
+				// 按解析后的分类把商品分组
+				var groups = {};
+				this.products.forEach(function(p) {
+					var cat = byId[String(p.categoryId)] || byName[p.categoryName] || null;
+					var key;
+					if (cat) {
+						key = 'cat_' + (cat._id || cat.name);
+					} else {
+						key = 'orphan_' + (p.categoryName || 'unknown');
 					}
-					result.push(p);
-				}
+					if (!groups[key]) groups[key] = { cat: cat, products: [] };
+					groups[key].products.push(p);
+				});
+				// 按左侧分类栏顺序生成 header（header 用分类的 name，商品按 product 对象渲染）
+				var seen = {};
+				this.categories.forEach(function(c) {
+					if (c.isFixed) return;  // 固定项团购特惠已在上面处理
+					var key = 'cat_' + (c._id || c.name);
+					var group = groups[key];
+					var list = group ? group.products : [];
+					result.push({ isHeader: true, categoryName: c.name });
+					list.forEach(function(p) { result.push(p); });
+					seen[key] = true;
+				});
+				// 兜底：找不到对应分类的孤儿商品，追加到末尾
+				Object.keys(groups).forEach(function(key) {
+					if (seen[key]) return;
+					var group = groups[key];
+					var displayName = group.cat ? group.cat.name : (group.products[0].categoryName || '其他');
+					result.push({ isHeader: true, categoryName: displayName });
+					group.products.forEach(function(p) { result.push(p); });
+				});
 				return result;
 			}
 		},
 		onLoad: function() {
 			this.loadCategories();
+			this.loadFlashSaleProducts();
 		},
 		onShow: function() {
 			this.syncCart();
@@ -154,7 +189,7 @@
 					data: { method: 'getCategories', params: {} },
 					success: function(res) {
 						if (res.data && res.data.code === 0 && res.data.data && res.data.data.length > 0) {
-							self.categories = res.data.data;
+							self.categories = [{ name: '团购特惠', _id: '__fixed_flash_sale__', isFixed: true }].concat(res.data.data);
 						} else {
 							self.setDefaultCategories();
 						}
@@ -168,6 +203,7 @@
 			},
 			setDefaultCategories: function() {
 				this.categories = [
+					{ name: '团购特惠', _id: '__fixed_flash_sale__', isFixed: true },
 					{ name: '叶菜类' },
 					{ name: '茄果类' },
 					{ name: '瓜果类' },
@@ -299,6 +335,59 @@
 					}
 				});
 			},
+			// 加载首页同源的团购特惠商品（固定首项分类用）
+			loadFlashSaleProducts: function() {
+				var self = this;
+				uni.request({
+					url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSale',
+					method: 'POST',
+					data: { method: 'getFlashSale', params: {} },
+					success: function(saleRes) {
+						if (!(saleRes.data && saleRes.data.code === 0 && saleRes.data.data)) {
+							self.flashSaleProducts = [];
+							return;
+						}
+						var saleList = Array.isArray(saleRes.data.data) ? saleRes.data.data : [saleRes.data.data];
+						var now = Date.now();
+						var activeSale = saleList.find(function(s) { return s.status === true && s.startTime <= now && s.endTime > now; })
+							|| saleList.find(function(s) { return s.status === true && s.endTime > now; })
+							|| null;
+						if (!activeSale) {
+							self.flashSaleProducts = [];
+							return;
+						}
+						uni.request({
+							url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSaleProducts',
+							method: 'POST',
+							data: { method: 'getFlashSaleProducts', params: { flashSaleId: activeSale._id } },
+							success: function(productRes) {
+								if (productRes.data && productRes.data.code === 0) {
+									self.flashSaleProducts = (productRes.data.data || []).map(function(item) {
+										var firstSpec = (item.specs && item.specs[0]) ? item.specs[0] : null;
+										return {
+											id: item._id,
+											name: item.name,
+											image: item.image || '/static/images/placeholder.png',
+											desc: '新鲜直采·产地直发',
+											service: '当日下单·次日自提',
+										spec: firstSpec ? (firstSpec.name || '') : '',
+											originalPrice: '¥' + (item.originalPrice || 0),
+											currentPrice: '¥' + (item.flashPrice || 0),
+											stock: firstSpec ? (firstSpec.stock || 0) : 0,
+											quantity: 0
+										};
+									});
+									self.syncCart();
+								} else {
+									self.flashSaleProducts = [];
+								}
+							},
+							fail: function() { self.flashSaleProducts = []; }
+						});
+					},
+					fail: function() { self.flashSaleProducts = []; }
+				});
+			},
 			onPromoChange: function(e) {
 				this.currentPromo = e.detail.current;
 			},
@@ -329,6 +418,13 @@
 						total += p.quantity * price;
 					}
 				});
+				this.flashSaleProducts.forEach(function(p) {
+					if (p.quantity > 0) {
+						count += p.quantity;
+						var price = parseFloat(p.currentPrice.replace('¥', ''));
+						total += p.quantity * price;
+					}
+				});
 				this.selectedCount = count;
 				this.selectedTotal = total.toFixed(2);
 				this.cartCount = count;
@@ -348,9 +444,23 @@
 						}
 						p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
 					});
+					// 团购特惠用 id 匹配（避免与首页共享 cartItems 时的重名串号）
+					this.flashSaleProducts.forEach(function(p) {
+						var cartItem = null;
+						for (var i = 0; i < parsed.length; i++) {
+							if (parsed[i].id === p.id) {
+								cartItem = parsed[i];
+								break;
+							}
+						}
+						p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
+					});
 					this.updateCart();
 				} else {
 					this.products.forEach(function(p) {
+						p.quantity = 0;
+					});
+					this.flashSaleProducts.forEach(function(p) {
 						p.quantity = 0;
 					});
 					this.cartCount = 0;
@@ -362,21 +472,25 @@
 				uni.navigateTo({ url: "/pages/cart/index" });
 			},
 			goCheckout: function() {
-				var selectedProducts = this.products.filter(function(p) {
-					return p.quantity > 0;
-				}).map(function(p) {
+				var toCartItem = function(p) {
 					return {
 						productId: p.id,
 						id: p.id,
 						name: p.name,
-						spec: p.desc,
+						spec: p.spec || p.desc,
 						image: p.image,
 						currentPrice: p.currentPrice,
 						originalPrice: p.originalPrice,
 						quantity: p.quantity,
 						selected: true
 					};
-				});
+				};
+				var selectedProducts = this.products
+					.filter(function(p) { return p.quantity > 0; })
+					.map(toCartItem)
+					.concat(this.flashSaleProducts
+						.filter(function(p) { return p.quantity > 0; })
+						.map(toCartItem));
 				if (selectedProducts.length > 0) {
 					uni.setStorageSync('cartItems', JSON.stringify(selectedProducts));
 				}

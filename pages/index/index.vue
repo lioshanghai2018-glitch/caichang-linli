@@ -29,11 +29,11 @@
       </view>
     </view>
 
-    <!-- 卡片2：限时特惠 -->
+    <!-- 卡片2：团购特惠 -->
     <view class="card" v-if="flashSaleProducts.length > 0">
       <view class="flash-sale-section">
         <view class="section-header">
-          <text class="section-title">限时特惠</text>
+          <text class="section-title">团购特惠</text>
           <view class="countdown-box">
             <text class="countdown-text">距结束 {{countdown}}</text>
           </view>
@@ -71,10 +71,10 @@
       <view class="group-section">
         <swiper class="group-swiper" circular="true" @change="onSwiperChange">
           <swiper-item>
-            <image class="group-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+            <image class="group-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/shucailan.jpg" mode="aspectFill"></image>
           </swiper-item>
           <swiper-item>
-            <image class="group-image" src="/static/images/shucailan.png" mode="aspectFill"></image>
+            <image class="group-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/shucailan.jpg" mode="aspectFill"></image>
           </swiper-item>
         </swiper>
         <view class="swiper-indicators">
@@ -161,10 +161,6 @@
     onShow() {
       this.syncAllCart();
       this.loadUserInfo();
-    },
-
-    onShow() {
-      this.syncAllCart();
     },
 
     onUnload() {
@@ -258,26 +254,28 @@
       },
 
       addToCart(item) {
-        item.quantity++;
-        console.log('[index] addToCart, item.quantity=', item.quantity, 'selectedCount=', this.selectedCount)
+        const idx = this.flashSaleProducts.findIndex(p => p.id === item.id);
+        if (idx < 0) return;
+        this.flashSaleProducts[idx].quantity++;
         this.saveFlashSaleToCart();
-        console.log('[index] after saveFlashSaleToCart, selectedCount=', this.selectedCount, 'selectedTotal=', this.selectedTotal)
       },
 
       decreaseFromFlash(product) {
-        if (product.quantity > 0) {
-          product.quantity--;
+        const idx = this.flashSaleProducts.findIndex(p => p.id === product.id);
+        if (idx >= 0 && this.flashSaleProducts[idx].quantity > 0) {
+          this.flashSaleProducts[idx].quantity--;
           this.saveFlashSaleToCart();
         }
       },
 
       saveFlashSaleToCart() {
         // 从本地存储读取现有购物车
-        const cartItems = uni.getStorageSync("cartItems") ? JSON.parse(uni.getStorageSync("cartItems")) : [];
-        // 更新限时特惠商品
+        const raw = uni.getStorageSync("cartItems");
+        const cartItems = raw ? JSON.parse(raw) : [];
+        // 更新限时特惠商品（用 id 去重，name 可能重复）
         this.flashSaleProducts.forEach(p => {
           if (p.quantity > 0) {
-            const existIndex = cartItems.findIndex(c => c.name === p.name);
+            const existIndex = cartItems.findIndex(c => c.id === p.id);
             if (existIndex >= 0) {
               cartItems[existIndex].quantity = p.quantity;
             } else {
@@ -295,7 +293,7 @@
             }
           } else {
             // 数量为0，从购物车移除
-            const existIndex = cartItems.findIndex(c => c.name === p.name);
+            const existIndex = cartItems.findIndex(c => c.id === p.id);
             if (existIndex >= 0) {
               cartItems.splice(existIndex, 1);
             }
@@ -322,7 +320,7 @@
       syncAllCart() {
         const cartItems = uni.getStorageSync("cartItems") ? JSON.parse(uni.getStorageSync("cartItems")) : [];
         this.flashSaleProducts.forEach(p => {
-          const cartItem = cartItems.find(c => c.name === p.name);
+          const cartItem = cartItems.find(c => c.id === p.id);
           p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
         });
         this.updateSelectedTotal();

@@ -25,7 +25,7 @@
           <text class="item-name">{{ item.name }}</text>
           <text class="item-spec">{{ item.spec }}</text>
           <view class="item-bottom">
-            <text class="item-price">¥{{ item.currentPrice }}</text>
+            <text class="item-price">{{ item.currentPrice }}</text>
             <!-- 数量控制 -->
             <view class="quantity-control">
               <view class="qty-btn minus" @tap="decrease(index)" v-if="item.quantity > 0">
@@ -114,10 +114,16 @@ export default {
       uni.navigateBack()
     },
     loadCart() {
-      // 从localStorage读取购物车数据
       const cartData = uni.getStorageSync('cartItems')
       if (cartData) {
-        this.cartItems = JSON.parse(cartData)
+        try {
+          const parsed = typeof cartData === 'string' ? JSON.parse(cartData) : cartData
+          this.cartItems = Array.isArray(parsed) ? parsed : []
+        } catch (e) {
+          this.cartItems = []
+        }
+      } else {
+        this.cartItems = []
       }
     },
     saveCart() {

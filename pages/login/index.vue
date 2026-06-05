@@ -2,7 +2,7 @@
 <view class="login-container">
 	<!-- 顶部图片占位区 -->
 	<view class="top-banner">
-		<image class="banner-image" src="/static/images/萝卜IP初稿.png" mode="aspectFill" />
+		<image class="banner-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/大研菜场_微信登录页.jpg" mode="aspectFill" />
 	</view>
 
 	<!-- 欢迎区 -->

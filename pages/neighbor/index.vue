@@ -17,7 +17,7 @@
 		</view>
 
 		<!-- 邻里横幅 -->
-		<image class="banner-image" src="/static/images/banner_neighbor.png" mode="aspectFill"></image>
+		<image class="banner-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/linli.jpg" mode="aspectFill"></image>
 
 		<!-- 分类标签栏 -->
 		<scroll-view class="tag-bar" scroll-x="true">
