@@ -49,7 +49,7 @@
 			</scroll-view>
 
 			<!-- 右侧商品列表 -->
-			<scroll-view class="product-area" scroll-y="true" :scroll-into-view="scrollIntoViewId" @scroll="onScroll">
+			<scroll-view class="product-area" :style="{ paddingBottom: selectedCount > 0 ? '220rpx' : '120rpx' }" scroll-y="true" :scroll-into-view="scrollIntoViewId" @scroll="onScroll">
 				<!-- 商品列表（含分类标题） -->
 				<view v-for="(item, index) in productsWithHeader" :key="index">
 					<view v-if="item.isHeader" class="category-header" :id="'cat-header-' + index">
@@ -691,7 +691,6 @@
 	flex: 1;
 	height: 100%;
 	padding: 16rpx 24rpx;
-	padding-bottom: 220rpx;
 	box-sizing: border-box;
 }
 

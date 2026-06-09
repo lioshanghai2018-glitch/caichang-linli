@@ -40,6 +40,7 @@ const STORAGE_KEYS = {
 }
 
 export {
+  BASE_URL,
   API_BASE,
   ORDER_STATUS,
   ORDER_STATUS_TEXT,

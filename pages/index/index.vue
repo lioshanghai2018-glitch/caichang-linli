@@ -2,7 +2,7 @@
   <view class="container">
     <!-- IP形象区域 -->
     <view class="ip-section">
-      <image class="ip-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/萝卜仔22.png" mode="aspectFill"></image>
+      <image class="ip-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/luobozai.png" mode="aspectFill"></image>
     </view>
 
     <!-- 卡片1：问候 + 买菜邻里 -->

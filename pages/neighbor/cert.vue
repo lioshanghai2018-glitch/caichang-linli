@@ -134,7 +134,8 @@ export default {
 			communityName: '',
 			submitTime: '',
 			certId: '',
-			certTime: ''
+			certTime: '',
+			submitting: false
 		}
 	},
 	computed: {
@@ -221,6 +222,7 @@ export default {
 			})
 		},
 		async submitCert() {
+			if (this.submitting) return  // 防重复点击
 			if (!this.canSubmit) {
 				if (!this.billUrl) {
 					uni.showToast({ title: '请上传地址证明', icon: 'none' })
@@ -229,91 +231,86 @@ export default {
 				}
 				return
 			}
+			this.submitting = true
 
 			uni.showLoading({ title: '上传中...' })
 
 			const userId = getUserId() || Date.now().toString()
 			let billCloudUrl = this.billUrl
 
-			// 上传账单到云存储
-			// billUrl 可能是 wxfile://tmp/、http://tmp/、cloud://（已上传过） 三种之一
-			// - cloud:// 开头：已上传过，直接用
-			// - 其他任意本地临时路径：触发上传（uniCloud 直传优先，失败降级 base64）
-			if (this.billUrl && !this.billUrl.startsWith('cloud://')) {
-				console.log('[cert] billUrl local path, try upload:', this.billUrl)
-				try {
+			try {
+				// 上传账单到云存储。billUrl 可能是 wxfile://tmp/、http://tmp/（本地临时路径）
+				// 或 cloud://（历史本地缓存，已不再产生）。非 cloud:// 都触发上传。
+				if (this.billUrl && !this.billUrl.startsWith('cloud://')) {
 					const res = await uploadCertImage(this.billUrl, `certs/${userId}_bill_${Date.now()}.jpg`)
-					console.log('[cert] uploadCertImage result:', res)
-					if (res && res.data && res.data.fileID) {
-						billCloudUrl = res.data.fileID
-					} else {
-						throw new Error((res && res.msg) || '返回无 fileID')
+					const fileID = (res && (res.data?.fileID || res.fileID)) || ''
+					if (!fileID) {
+						throw new Error('返回无 fileID（响应: ' + JSON.stringify(res).slice(0, 200) + '）')
 					}
-				} catch (e) {
-					console.error('[cert] bill upload failed:', e)
-					uni.hideLoading()
-					uni.showToast({ title: '账单上传失败：' + ((e && (e.msg || e.message)) || '请重试'), icon: 'none', duration: 3000 })
+					billCloudUrl = fileID
+				}
+
+				// 兜底：上传后必须是非本地路径。允许 cloud://（历史本地缓存）或 http(s)://。
+				if (!billCloudUrl
+					|| billCloudUrl === this.billUrl
+					|| (!billCloudUrl.startsWith('cloud://') && !billCloudUrl.startsWith('http'))) {
+					uni.showToast({ title: '账单图未上传到云端，请重试', icon: 'none' })
 					return
 				}
-			}
 
-			// 兜底：上传后必须是非本地路径（cloud:// 是规范形式；https:// 是 SDK 直传的临时 URL，
-			// 也会被商家端 resolveFileIdsInItems 当作原样 URL 渲染。任一即可）
-			if (!billCloudUrl
-				|| billCloudUrl === this.billUrl
-				|| (!billCloudUrl.startsWith('cloud://') && !billCloudUrl.startsWith('http'))) {
+				uni.showLoading({ title: '提交中...' })
+
+				// 姓名/手机号从本地用户信息取，商家审核页要显示
+				// user_info 存的是登录返回的 userInfo 完整对象（uni-id 字段是 nickname；自建 users 表是 phone）
+				const userInfo = uni.getStorageSync('user_info') || {}
+				const certData = {
+					userId: userId,
+					userName: userInfo.nickname || uni.getStorageSync('userName') || '邻居',
+					phone: uni.getStorageSync('user_phone') || userInfo.mobile || userInfo.phone || '',
+					billUrl: billCloudUrl,
+					submitTime: new Date().toISOString()
+				}
+
+				// 保存到本地存储（商家后台可以读取）
+				let localCerts = uni.getStorageSync('local_certs') || '[]'
+				try {
+					localCerts = JSON.parse(localCerts)
+				} catch (e) {
+					localCerts = []
+				}
+				const idx = localCerts.findIndex(c => c.userId === certData.userId)
+				if (idx >= 0) {
+					localCerts[idx] = { ...localCerts[idx], ...certData, status: 'pending' }
+				} else {
+					localCerts.push({ ...certData, status: 'pending' })
+				}
+				uni.setStorageSync('local_certs', JSON.stringify(localCerts))
+
+				try {
+					await submitCert(certData)
+				} catch (e) {
+					// API失败也继续，本地已保存
+				}
+
+				uni.showToast({ title: '提交成功', icon: 'success' })
+
+				// 保存本地状态
+				saveLocalCertStatus('pending', {
+					submitTime: new Date().toLocaleString('zh-CN'),
+					billUrl: billCloudUrl
+				})
+				this.certStatus = 'pending'
+				this.submitTime = new Date().toLocaleString('zh-CN')
+				setTimeout(() => {
+					uni.navigateBack()
+				}, 1000)
+			} catch (e) {
+				console.error('[cert] submitCert failed:', e)
+				uni.showToast({ title: '账单上传失败：' + ((e && (e.msg || e.message)) || '请重试'), icon: 'none', duration: 3000 })
+			} finally {
 				uni.hideLoading()
-				uni.showToast({ title: '账单图未上传到云端，请重试', icon: 'none' })
-				return
+				this.submitting = false
 			}
-
-			uni.showLoading({ title: '提交中...' })
-
-			// 姓名/手机号从本地用户信息取，商家审核页要显示
-			// user_info 存的是登录返回的 userInfo 完整对象（uni-id 字段是 nickname；自建 users 表是 phone）
-			const userInfo = uni.getStorageSync('user_info') || {}
-			const certData = {
-				userId: userId,
-				userName: userInfo.nickname || uni.getStorageSync('userName') || '邻居',
-				phone: uni.getStorageSync('user_phone') || userInfo.mobile || userInfo.phone || '',
-				billUrl: billCloudUrl,
-				submitTime: new Date().toISOString()
-			}
-
-			// 保存到本地存储（商家后台可以读取）
-			let localCerts = uni.getStorageSync('local_certs') || '[]'
-			try {
-				localCerts = JSON.parse(localCerts)
-			} catch (e) {
-				localCerts = []
-			}
-			const idx = localCerts.findIndex(c => c.userId === certData.userId)
-			if (idx >= 0) {
-				localCerts[idx] = { ...localCerts[idx], ...certData, status: 'pending' }
-			} else {
-				localCerts.push({ ...certData, status: 'pending' })
-			}
-			uni.setStorageSync('local_certs', JSON.stringify(localCerts))
-
-			try {
-				await submitCert(certData)
-			} catch (e) {
-				// API失败也继续，本地已保存
-			}
-
-			uni.hideLoading()
-			uni.showToast({ title: '提交成功', icon: 'success' })
-
-			// 保存本地状态
-			saveLocalCertStatus('pending', {
-				submitTime: new Date().toLocaleString('zh-CN'),
-				billUrl: billCloudUrl
-			})
-			this.certStatus = 'pending'
-			this.submitTime = new Date().toLocaleString('zh-CN')
-			setTimeout(() => {
-				uni.navigateBack()
-			}, 1000)
 		},
 		async reCert() {
 			const ok = await new Promise(r => uni.showModal({

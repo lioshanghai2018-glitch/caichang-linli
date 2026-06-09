@@ -115,8 +115,8 @@ export async function loginByWeixin(code) {
   return res.data
 }
 
-export async function bindWxPhone(code) {
-  const res = await callCloud('bindWxPhone', { code })
+export async function bindWxPhone(userId, code) {
+  const res = await callCloud('bindWxPhone', { userId, code })
   if (res.data && res.data.userInfo) {
     // 合并场景下 userId 会切换，同步刷新 storage
     uni.setStorageSync(STORAGE_KEYS.USER_ID, res.data.userInfo._id)

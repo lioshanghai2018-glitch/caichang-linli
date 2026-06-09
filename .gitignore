@@ -2,6 +2,5 @@ node_modules/
 unpackage/
 .DS_Store
 *.log
-0merchant-web/
 uniCloud-aliyun/cloudfunctions/
 .claude/settings.local.json
