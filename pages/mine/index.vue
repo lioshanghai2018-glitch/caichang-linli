@@ -93,7 +93,7 @@ const todayStats = ref({ pending: 0, delivering: 0, completed: 0 })
 onShow(() => {
   const info = uni.getStorageSync('riderInfo')
   if (!info) {
-    uni.switchTab({ url: '/pages/login/index' })
+    uni.reLaunch({ url: '/pages/login/index' })
     return
   }
   riderInfo.value = info

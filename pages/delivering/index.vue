@@ -51,27 +51,20 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import riderApi from '../../api/rider'
 
 const orders = ref([])
 const loading = ref(false)
-let timer = null
 
 onShow(() => {
   const riderInfo = uni.getStorageSync('riderInfo')
   if (!riderInfo) {
-    uni.switchTab({ url: '/pages/login/index' })
+    uni.reLaunch({ url: '/pages/login/index' })
     return
   }
   fetchOrders()
-  // 5s 轮询拉配送进度
-  timer = setInterval(fetchOrders, 5000)
-})
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
 })
 
 const fetchOrders = () => {

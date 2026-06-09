@@ -1,0 +1,30 @@
+{
+  "description": "本小程序仅在使用具体业务功能时收集必要信息，拒绝不影响使用",
+  "requiredPrivateInfos": ["getLocation", "chooseLocation"],
+  "collectItems": [
+    {
+      "purpose": "骑手定位与导航",
+      "scene": "取货/配送中",
+      "type": "位置信息",
+      "field": "userLocation"
+    },
+    {
+      "purpose": "取货凭证上传",
+      "scene": "取货拍照",
+      "type": "相册/相机",
+      "field": "album/camera"
+    },
+    {
+      "purpose": "联系用户/商家",
+      "scene": "订单联系",
+      "type": "联系方式",
+      "field": "phoneNumber"
+    },
+    {
+      "purpose": "骑手身份登录",
+      "scene": "登录",
+      "type": "账号信息",
+      "field": "phone/openid"
+    }
+  ]
+}

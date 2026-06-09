@@ -51,13 +51,12 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import riderApi from '../../api/rider'
 
 const orders = ref([])
 const loading = ref(false)
-let timer = null
 
 onShow(() => {
   const riderInfo = uni.getStorageSync('riderInfo')
@@ -66,12 +65,6 @@ onShow(() => {
     return
   }
   fetchOrders()
-  // 5s 轮询拉新订单（4 端实时同步）
-  timer = setInterval(fetchOrders, 5000)
-})
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
 })
 
 const fetchOrders = async () => {
@@ -125,7 +118,7 @@ const fetchOrders = async () => {
 
 const showDetail = (order) => {
   uni.navigateTo({
-    url: `/pages/order-detail/index?orderId=${order._id}&orderNo=${order.orderNo || ''}`
+    url: `/pages/orders/index?orderId=${order._id}&orderNo=${order.orderNo || ''}`
   })
 }
 
