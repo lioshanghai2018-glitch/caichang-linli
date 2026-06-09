@@ -4,3 +4,4 @@ unpackage/
 *.log
 uniCloud-aliyun/cloudfunctions/
 .claude/settings.local.json
+project.private.config.json
