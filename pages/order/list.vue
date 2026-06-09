@@ -33,8 +33,13 @@
     <view class="order-card" v-for="(item, idx) in orderList" :key="idx" @tap="goDetail(item)">
       <view class="card-header">
         <text class="order-no">订单号：{{item.orderNo}}</text>
-        <view class="order-status" :style="{background: item.statusBg, color: item.statusColor}">
-          <text>{{item.statusText}}</text>
+        <view class="header-right">
+          <view class="delivery-type-tag" :class="item.deliveryType">
+            <text>{{item.deliveryType === 'delivery' ? '配送' : '自提'}}</text>
+          </view>
+          <view class="order-status" :style="{background: item.statusBg, color: item.statusColor}">
+            <text>{{item.statusText}}</text>
+          </view>
         </view>
       </view>
       <view class="card-body">
@@ -115,6 +120,7 @@ export default {
         { key: 'pending_payment', label: '待付款', count: 0 },
         { key: 'pending_sorting', label: '待分拣', count: 0 },
         { key: 'sorting', label: '待配送', count: 0 },
+        { key: 'ready_for_pickup', label: '待自提', count: 0 },
         { key: 'delivering', label: '配送中', count: 0 },
         { key: 'completed', label: '已完成', count: 0 }
       ],
@@ -132,32 +138,32 @@ export default {
     this.noMore = false
     this.orderList = []
     this.loadOrders()
-    this.startPolling()
   },
-  onUnload() {
-    this.stopPolling()
+  async onPullDownRefresh() {
+    this.page = 1
+    this.noMore = false
+    this.orderList = []
+    try {
+      await this.loadOrders()
+    } finally {
+      uni.stopPullDownRefresh()
+    }
   },
   methods: {
-    startPolling() {
-      this.stopPolling()
-      this._pollTimer = setInterval(() => this.loadOrders(), 8000)
-    },
-    stopPolling() {
-      if (this._pollTimer) {
-        clearInterval(this._pollTimer)
-        this._pollTimer = null
-      }
-    },
     async loadOrders() {
       if (this.loading) return
       this.loading = true
       try {
-        const res = await getOrders({
+        const params = {
           status: this.currentStatus,
           page: this.page,
           pageSize: this.pageSize,
           keyword: this.searchKeyword
-        })
+        }
+        // [diag] 临时诊断日志：排查"订单列表为空"，下次能跑过就删
+        console.log('[list] loadOrders 入参:', params, 'storage.merchant_id=', uni.getStorageSync('merchant_id'))
+        const res = await getOrders(params)
+        console.log('[list] loadOrders 返回: code=', res?.code, 'data 类型=', Array.isArray(res?.data) ? 'array' : typeof res?.data, 'len=', Array.isArray(res?.data) ? res.data.length : (res?.data?.list?.length || 0))
         const list = (Array.isArray(res.data) ? res.data : (res.data?.list || [])).map(o => {
           const style = getStatusStyle(o.status)
           return {
@@ -167,6 +173,7 @@ export default {
             statusText: ORDER_STATUS_TEXT[o.status] || o.status || '',
             statusColor: style.color,
             statusBg: style.bg,
+            deliveryType: o.deliveryType || 'self',
             goods: (o.items || []).map(it => ({ name: it.productName || it.name, qty: it.quantity || it.qty || 1 })),
             customerName: o.address?.name || o.customerName || '',
             customerPhone: o.address?.phone || o.customerPhone || '',
@@ -319,6 +326,31 @@ export default {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16rpx;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.delivery-type-tag {
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+}
+.delivery-type-tag text {
+  font-size: 22rpx;
+  font-weight: 500;
+}
+.delivery-type-tag.delivery {
+  background: #E3F2FD;
+}
+.delivery-type-tag.delivery text {
+  color: #1976D2;
+}
+.delivery-type-tag.self {
+  background: #FFF3E0;
+}
+.delivery-type-tag.self text {
+  color: #FF6B00;
 }
 .order-no {
   font-size: 26rpx;

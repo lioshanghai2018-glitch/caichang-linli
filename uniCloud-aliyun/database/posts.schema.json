@@ -13,6 +13,9 @@
     "commentCount": { "bsonType": "int", "defaultValue": 0 },
     "likedUserIds": { "bsonType": "array", "defaultValue": [] },
     "status": { "bsonType": "string", "defaultValue": "active", "description": "active / closed / deleted" },
+    "downReason": { "bsonType": "string", "defaultValue": "" },
+    "downAt": { "bsonType": "datetime" },
+    "downBy": { "bsonType": "string", "defaultValue": "" },
     "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
     "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
   }

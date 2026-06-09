@@ -18,6 +18,44 @@ try {
 const db = uniCloud.database()
 const dbCmd = db.command
 
+// 微信小程序 AppID（与 manifest.json → mp-weixin.appid 一致）
+// AppSecret 需在 uniCloud → merchant-api → 配置/环境变量 里设置 WX_APPSECRET
+const WX_APPID = 'wx1621496ab4bca45d'
+let _wxAccessTokenCache = { token: '', expiresAt: 0 }
+async function getWxAccessToken() {
+  if (_wxAccessTokenCache.token && Date.now() < _wxAccessTokenCache.expiresAt) {
+    return _wxAccessTokenCache.token
+  }
+  const secret = process.env.WX_APPSECRET
+  if (!secret) throw new Error('云函数未配置 WX_APPSECRET 环境变量')
+  const r = await uniCloud.httpclient.request(
+    `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${WX_APPID}&secret=${secret}`,
+    { method: 'GET', dataType: 'json' }
+  )
+  if (r.data && r.data.errcode) throw new Error('access_token 获取失败: ' + r.data.errmsg)
+  _wxAccessTokenCache = { token: r.data.access_token, expiresAt: Date.now() + 7000 * 1000 }
+  return r.data.access_token
+}
+
+// 生成 8 位 0-9 + A-Z 账号；查重 5 次，理论撞不到
+function generateAccount() {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  let s = ''
+  for (let i = 0; i < 8; i++) {
+    s += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return s
+}
+
+async function generateUniqueAccount() {
+  for (let i = 0; i < 5; i++) {
+    const account = generateAccount()
+    const exist = await db.collection('users').where({ account }).limit(1).get()
+    if (!exist.data || exist.data.length === 0) return account
+  }
+  throw new Error('生成 account 失败')
+}
+
 // 兜底划线价：商家没填 / 填 0 / 填得比售价还低时，自动按 1.5 倍兜底
 // 直接改 doc 本身（包括顶层 price/originalPrice + specs[0]）
 function ensureOriginalPrice(doc) {
@@ -43,16 +81,57 @@ function ensureOriginalPrice(doc) {
 }
 
 // 把 items 数组里所有 cloud://xxx 形式的 fileID 批量转成 https 临时 URL
-// 扫描 image / coverImage / images 三个常见字段
+// 扫描的单图字段：image / coverImage / idCardUrl / billUrl / idCardImage / billImage
+// 扫描的数组字段：images
+const SINGLE_IMAGE_FIELDS = ['image', 'coverImage', 'idCardUrl', 'billUrl', 'idCardImage', 'billImage']
+
+// 阿里云 fileID 反向解析：cloud://{spaceId}-{env}/{path} → https://{spaceId}.cdn.bspapp.com/{env}/{path}
+// 背景：用户端 cert 提交代码把阿里云 SDK 返回的 https URL 误转成 cloud:// 形式存 DB。
+//       实际阿里云 fileID 本身就是 https 链接且永久（DCloud 文档原话："阿里云返回的fileID为链接形式
+//       可以直接使用"），cloud:// 是用户端代码自己拼的、不是合法 fileID，云函数调 getTempFileURL 会失败。
+//       所以遇到 mp- 前缀的 cloud:// URL，直接反构 https 永久 URL 返回，绕开 getTempFileURL。
+//       老的 cert_1780549815087（2026-06-04 存的就是 https）到今天 2026-06-07 还能正常显示，
+//       证明这个反构是安全的。
+// 返回 null 表示不是阿里云格式（fc- 腾讯云等），外层走原 getTempFileURL 路径。
+function aliyunFileIDToHttps(cloudFileID) {
+  if (typeof cloudFileID !== 'string') return null
+  const m = cloudFileID.match(/^cloud:\/\/((mp|fc)-[a-z0-9-]+)-([a-z][a-z0-9]*)\/(.+)$/i)
+  if (!m) return null
+  const spaceId = m[1]
+  if (!spaceId.startsWith('mp-')) return null  // 仅处理阿里云 mp- 前缀
+  const env = m[3]
+  const path = m[4]
+  return `https://${spaceId}.cdn.bspapp.com/${env}/${path}`
+}
+
 async function resolveFileIdsInItems(items) {
   if (!Array.isArray(items) || items.length === 0) return
   const fileIds = new Set()
   for (const it of items) {
     if (!it) continue
-    const fields = [it.image, it.coverImage]
-    if (Array.isArray(it.images)) fields.push(...it.images)
-    for (const f of fields) {
-      if (typeof f === 'string' && f.startsWith('cloud://')) fileIds.add(f)
+    for (const f of SINGLE_IMAGE_FIELDS) {
+      if (typeof it[f] === 'string' && it[f].startsWith('cloud://')) {
+        // 阿里云 fileID：直接反构 https 永久 URL，绕开 getTempFileURL
+        const https = aliyunFileIDToHttps(it[f])
+        if (https) {
+          it[f] = https
+        } else {
+          fileIds.add(it[f])
+        }
+      }
+    }
+    if (Array.isArray(it.images)) {
+      for (let i = 0; i < it.images.length; i++) {
+        const x = it.images[i]
+        if (typeof x === 'string' && x.startsWith('cloud://')) {
+          const https = aliyunFileIDToHttps(x)
+          if (https) {
+            it.images[i] = https
+          } else {
+            fileIds.add(x)
+          }
+        }
+      }
     }
   }
   if (fileIds.size === 0) return
@@ -64,8 +143,9 @@ async function resolveFileIdsInItems(items) {
     }
     for (const it of items) {
       if (!it) continue
-      if (typeof it.image === 'string' && map[it.image]) it.image = map[it.image]
-      if (typeof it.coverImage === 'string' && map[it.coverImage]) it.coverImage = map[it.coverImage]
+      for (const f of SINGLE_IMAGE_FIELDS) {
+        if (typeof it[f] === 'string' && map[it[f]]) it[f] = map[it[f]]
+      }
       if (Array.isArray(it.images)) it.images = it.images.map(x => (typeof x === 'string' && map[x]) ? map[x] : x)
     }
   } catch (e) {
@@ -142,6 +222,79 @@ const ORDER_STATUS_MAP = {
 function normalizeOrderStatus(s) {
   if (!s) return ''
   return ORDER_STATUS_MAP[s] || s
+}
+
+// ==================== 库存联动（模块级函数，不能用 this._adjustStock，云对象 this 拿不到兄弟方法）====================
+// 按订单 items 调整商品库存
+// direction: 'deduct' 扣减（先校验再扣） / 'restore' 回补（直接加）
+// 规格匹配：item.spec 文本与 products.specs[i].name 比对；找不到则用 specs[0]；无 specs 则用顶层 stock
+async function _adjustStock(items, direction) {
+  if (!Array.isArray(items) || !items.length) {
+    console.log('[stock] items 为空，跳过')
+    return { ok: true, processed: 0, skipped: 0 }
+  }
+  let processed = 0
+  let skipped = 0
+  for (const it of items) {
+    console.log(`[stock] 处理 item: productId=${it.productId} name=${it.name} spec=${it.spec} qty=${it.qty} dir=${direction}`)
+    if (!it.productId) {
+      // 严格模式：deduct 时 productId 缺失直接报错（防止 stockDeducted 被错误写入）
+      // restore 时静默跳过（容错，不阻塞取消）
+      if (direction === 'deduct') {
+        console.log(`[stock] ❌ deduct 时 productId 为空，报错`)
+        return { ok: false, msg: `【${it.name}】商品 ID 缺失，无法扣库存（请清空购物车后重新添加）` }
+      } else {
+        console.log(`[stock] ⚠️ restore 时 productId 为空，静默跳过`)
+        skipped++
+        continue
+      }
+    }
+    const qty = Math.abs(parseInt(it.qty) || 0)
+    if (qty === 0) {
+      console.log(`[stock] ⚠️ qty=0 跳过`)
+      skipped++
+      continue
+    }
+    // 读商品
+    const pRes = await db.collection('products').doc(it.productId).get()
+    const p = pRes.data && pRes.data[0]
+    if (!p) {
+      console.log(`[stock] ❌ 商品不存在 _id=${it.productId}，跳过`)
+      skipped++
+      continue
+    }
+    console.log(`[stock] 找到商品 ${p.name}，当前 stock=${p.stock} specs=${JSON.stringify(p.specs)}`)
+    // 找规格
+    let specIdx = -1
+    if (Array.isArray(p.specs) && p.specs.length) {
+      specIdx = p.specs.findIndex(s => s.name === it.spec)
+      if (specIdx < 0) specIdx = 0
+    }
+    if (specIdx >= 0) {
+      const field = `specs.${specIdx}.stock`
+      if (direction === 'deduct') {
+        const cur = Number(p.specs[specIdx].stock || 0)
+        if (cur < qty) {
+          return { ok: false, msg: `【${it.name}】库存不足（剩 ${cur}，需 ${qty}）` }
+        }
+      }
+      await db.collection('products').doc(it.productId).update({
+        [field]: dbCmd.inc(direction === 'deduct' ? -qty : qty)
+      })
+    } else {
+      if (direction === 'deduct') {
+        const cur = Number(p.stock || 0)
+        if (cur < qty) {
+          return { ok: false, msg: `【${it.name}】库存不足（剩 ${cur}，需 ${qty}）` }
+        }
+      }
+      await db.collection('products').doc(it.productId).update({
+        stock: dbCmd.inc(direction === 'deduct' ? -qty : qty)
+      })
+    }
+    processed++
+  }
+  return { ok: true, processed, skipped }
 }
 
 module.exports = {
@@ -277,6 +430,13 @@ module.exports = {
     const riderId = (params && params.riderId) || arguments[1]
     if (!orderNo || !riderId) return { code: -1, msg: 'orderNo 和 riderId 必填' }
 
+    // 防御：自提单不分配骑手
+    const beforeR = await db.collection('orders').where({ orderNo }).field({ deliveryType: true }).get()
+    const before = beforeR.data && beforeR.data[0]
+    if (before && before.deliveryType === 'self') {
+      return { code: -1, msg: '自提单无需分配骑手' }
+    }
+
     const result = await db.collection('orders').where({ orderNo }).update({
       riderId,
       status: 'sorting',
@@ -319,7 +479,33 @@ module.exports = {
     if (!status) return { code: -1, msg: 'status 必填' }
 
     const where = orderNo ? { orderNo } : { _id: id }
-    const updateData = { status, updatedAt: new Date(), ...extraData }
+    // 库存联动：先读订单判断是否需要扣/退
+    const orderBefore = await db.collection('orders').where(where).get()
+    const oldOrder = orderBefore.data && orderBefore.data[0]
+    if (!oldOrder) return { code: -1, msg: '订单不存在' }
+    const oldStatus = oldOrder.status
+    const wasDeducted = !!oldOrder.stockDeducted
+    const PAID_LIKE = ['paid', 'pending_sorting', 'sorting', 'ready_for_pickup', 'delivering', 'completed']
+    const isNewPaid = PAID_LIKE.includes(status)
+    const isNewCancelled = status === 'cancelled' || status === 'refunded'
+    const stockDelta = {}
+    console.log(`[updateOrderStatus] oldStatus=${oldStatus} newStatus=${status} wasDeducted=${wasDeducted} isNewPaid=${isNewPaid} isNewCancelled=${isNewCancelled}`)
+    if (!wasDeducted && oldStatus === 'pending_payment' && isNewPaid) {
+      console.log('[updateOrderStatus] 进入扣库存路径')
+      // 第一次从待付款进入已支付系状态 → 扣库存
+      const adj = await _adjustStock(oldOrder.items, 'deduct')
+      if (!adj.ok) return { code: -1, msg: adj.msg }
+      stockDelta.stockDeducted = true
+    } else if (wasDeducted && isNewCancelled) {
+      console.log('[updateOrderStatus] 进入退库存路径')
+      // 之前已扣，现在取消或退款 → 退库存
+      const adj = await _adjustStock(oldOrder.items, 'restore')
+      if (!adj.ok) return { code: -1, msg: adj.msg }
+      stockDelta.stockDeducted = false
+    } else {
+      console.log('[updateOrderStatus] 无库存变动（已扣过 / 非相关状态切换）')
+    }
+    const updateData = { status, updatedAt: new Date(), ...extraData, ...stockDelta }
     const result = await db.collection('orders').where(where).update(updateData)
 
     if (result.updated > 0) {
@@ -374,13 +560,47 @@ module.exports = {
       || _step1
     var orderData = orderData_unwrapped
     const items = orderData.items || orderData.products || []
+    // 计算每件商品小计（itemTotal）并累加总额（totalAmount）
+    let computedTotal = 0
+    const itemsWithTotal = items.map(it => {
+      const price = parseFloat(it.price) || 0
+      const qty = parseInt(it.qty) || 1
+      const itemTotal = +(price * qty).toFixed(2)
+      computedTotal += itemTotal
+      return Object.assign({}, it, { price, qty, itemTotal })
+    })
+    // 加上配送费
+    const deliveryFeeNum = parseFloat(orderData.deliveryFee) || 0
+    computedTotal = +(computedTotal + deliveryFeeNum).toFixed(2)
+    // 兜底 deliveryType：老客户端/脏数据 → 默认 'self'
+    const allowedTypes = ['self', 'delivery']
+    const deliveryType = allowedTypes.includes(orderData.deliveryType) ? orderData.deliveryType : 'self'
     const doc = Object.assign({}, orderData, {
-      items,
+      deliveryType,
+      items: itemsWithTotal,
+      totalAmount: orderData.totalAmount != null ? orderData.totalAmount : computedTotal,
       status: orderData.status || 'pending_payment',
       createdAt: new Date(),
       updatedAt: new Date()
     })
     delete doc.products
+    // 创建即已支付（测试模式 status=pending_sorting / 未来真实支付 status=paid）→ 先校验库存再扣
+    console.log(`[createOrder] status=${doc.status} items.length=${doc.items ? doc.items.length : 0}`)
+    if (doc.status && doc.status !== 'pending_payment') {
+      console.log('[createOrder] 进入扣库存路径')
+      const adj = await _adjustStock(doc.items, 'deduct')
+      if (!adj.ok) return { code: -1, msg: adj.msg }
+      // 只有真正处理过至少一个 item 才标记 stockDeducted=true
+      // 防止 productId=null 时静默跳过、却把 stockDeducted 错误写入
+      if (adj.processed > 0) {
+        doc.stockDeducted = true
+        console.log(`[createOrder] 扣库存成功 processed=${adj.processed} skipped=${adj.skipped}`)
+      } else {
+        console.log(`[createOrder] 全部 items 被跳过 processed=0，不标记 stockDeducted`)
+      }
+    } else {
+      console.log('[createOrder] status=pending_payment，跳过扣库存')
+    }
     const result = await db.collection('orders').add(doc)
     const verify = await db.collection('orders').doc(result.id).get()
     const stored = verify.data && verify.data[0]
@@ -405,6 +625,8 @@ module.exports = {
       code: 0,
       data: {
         orderId: result.id,
+        totalAmount: computedTotal,
+        items: itemsWithTotal,
         storedKeys: stored ? Object.keys(stored) : [],
         stored,
         diag: {
@@ -428,6 +650,12 @@ module.exports = {
     const orderId = p.orderId || p.id || p._id || arguments[0]
     const deliveryStatus = p.deliveryStatus || arguments[1]
     if (!orderId || !deliveryStatus) return { code: -1, msg: 'orderId 和 deliveryStatus 必填' }
+    // 防御：自提单不支持骑手改状态
+    const beforeOrder = await db.collection('orders').doc(orderId).field({ deliveryType: true }).get()
+    const before = beforeOrder.data && beforeOrder.data[0]
+    if (before && before.deliveryType === 'self') {
+      return { code: -1, msg: '自提单不支持骑手改状态' }
+    }
 
     const result = await db.collection('orders').doc(orderId).update({
       deliveryStatus,
@@ -858,6 +1086,7 @@ module.exports = {
     if (params.merchantId) where.merchantId = params.merchantId
     if (params.userId) where.userId = params.userId
     if (params.riderId) where.riderId = params.riderId
+    if (params.userPhone) where['address.phone'] = params.userPhone
     // status=all/全部 时不过滤；其他值才精确匹配
     if (params.status && params.status !== 'all') where.status = params.status
     if (params.deliveryStatus) where.deliveryStatus = params.deliveryStatus
@@ -946,9 +1175,17 @@ module.exports = {
   async getCommunities(params) {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
-    const where = {}
-    if (params.merchantId) where.merchantId = params.merchantId
-    const r = await db.collection('communities').where(where).get()
+    let r
+    if (params.merchantId) {
+      // 取该商家的小区 + 没有归属的老数据（保证 APP/WEB 两端看到一致结果）
+      r = await db.collection('communities').where(dbCmd.or([
+        { merchantId: params.merchantId },
+        { merchantId: '' },
+        { merchantId: null }
+      ])).get()
+    } else {
+      r = await db.collection('communities').get()
+    }
     return { code: 0, data: r.data || [] }
   },
 
@@ -1020,13 +1257,24 @@ module.exports = {
     const idleRiders = await db.collection('riders').where({ riderStatus: 'idle' }).limit(1).get()
     if (!idleRiders.data || !idleRiders.data.length) return { code: 0, data: { assigned: 0 } }
     const riderId = idleRiders.data[0]._id
-    const pendingOrders = await db.collection('orders').where({ status: 'paid', riderId: dbCmd.exists(false) }).limit(10).get()
+    const pendingOrders = await db.collection('orders').where({ status: 'paid', riderId: dbCmd.exists(false), deliveryType: dbCmd.neq('self') }).limit(10).get()
     let count = 0
     for (const o of pendingOrders.data || []) {
       await db.collection('orders').doc(o._id).update({ riderId, status: 'sorting', updatedAt: new Date() })
       count++
     }
     return { code: 0, data: { assigned: count, riderId } }
+  },
+
+  // 一次性：给所有老订单补 deliveryType='self'（按用户端默认行为兜底）
+  async backfillDeliveryType() {
+    const all = await db.collection('orders').where({ deliveryType: dbCmd.exists(false) }).limit(2000).get()
+    let n = 0
+    for (const o of (all.data || [])) {
+      await db.collection('orders').doc(o._id).update({ deliveryType: 'self' })
+      n++
+    }
+    return { code: 0, data: { updated: n, total: (all.data || []).length } }
   },
 
   async riderLogin(params) {
@@ -1058,7 +1306,7 @@ module.exports = {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
     const { riderId, status, deliveryStatus } = params
-    const where = { riderId }
+    const where = { riderId, deliveryType: dbCmd.neq('self') }
     if (status) where.status = status
     if (deliveryStatus) where.deliveryStatus = deliveryStatus
     const r = await db.collection('orders').where(where).orderBy('createdAt', 'desc').limit(50).get()
@@ -1072,7 +1320,7 @@ module.exports = {
     const merchantId = params.merchantId
     if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
     const r = await db.collection('orders')
-      .where({ merchantId, status: 'sorting' })
+      .where({ merchantId, status: 'sorting', deliveryType: dbCmd.neq('self') })
       .orderBy('createdAt', 'asc')
       .limit(50)
       .get()
@@ -1092,6 +1340,7 @@ module.exports = {
     const r = await db.collection('orders').doc(orderId).get()
     const order = r.data && r.data[0]
     if (!order) return { code: -1, msg: '订单不存在' }
+    if (order.deliveryType === 'self') return { code: -1, msg: '该订单为自提单，无需骑手配送' }
     if (order.riderId && order.riderId !== riderId) return { code: -1, msg: '订单已被其他骑手接走' }
     await db.collection('orders').doc(orderId).update({
       riderId,
@@ -1222,8 +1471,70 @@ module.exports = {
     const where = {}
     if (params.merchantId) where.merchantId = params.merchantId
     if (params.userId) where.userId = params.userId
-    const r = await db.collection('conversations').where(where).orderBy('lastMessageAt', 'desc').get()
+    // 线上老数据用 lastMessageTime（不是 lastMessageAt）
+    const r = await db.collection('conversations').where(where).orderBy('lastMessageTime', 'desc').get()
     return { code: 0, data: r.data || [] }
+  },
+
+  // 创建或获取已存在的会话（按 merchantId+userId 查重，兼容老数据随机 _id）
+  async createConversation(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const { merchantId, userId, userName, orderNo } = data
+    if (!merchantId || !userId) return { code: -1, msg: 'merchantId 和 userId 必填' }
+
+    // 查 user 表，拿到真实昵称/头像（用来补全 userName，兼容老会话 userName 字段缺失）
+    const userRes = await db.collection('users').where({ _id: userId }).limit(1).get()
+    const realUser = userRes.data && userRes.data[0]
+    const realUserName = (realUser && (realUser.nickname || realUser.userName)) || userName || ('用户_' + String(userId).slice(-4))
+
+    // 查重：用 where 查同 merchantId+userId 的会话（老数据 _id 是随机的，不能用 doc 查询）
+    const exist = await db.collection('conversations').where({ merchantId, userId }).limit(1).get()
+    if (exist.data && exist.data[0]) {
+      const conv = exist.data[0]
+      const update = { updatedAt: new Date() }
+      // 始终用真实昵称回写（覆盖老数据里 fallback 的"用户_xxxx"）
+      if (realUserName) update.userName = realUserName
+      if (orderNo && !conv.orderNo) update.orderNo = orderNo
+      if (Object.keys(update).length > 1) {
+        await db.collection('conversations').doc(conv._id).update(update)
+      }
+      return { code: 0, data: { ...conv, ...update } }
+    }
+    // 新建：字段名跟老数据一致（lastMessageTime / unreadMerchant / unreadUser）
+    const now = new Date()
+    const conv = {
+      merchantId,
+      userId,
+      userName: realUserName,
+      orderNo: orderNo || '',
+      lastMessage: '',
+      lastMessageTime: now,
+      unreadUser: 0,
+      unreadMerchant: 0,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now
+    }
+    const addRes = await db.collection('conversations').add(conv)
+    return { code: 0, data: { _id: addRes.id, ...conv } }
+  },
+
+  // 标记会话已读/已解决/重新打开
+  async updateConversation(data) {
+    const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
+    var data = data_unwrapped
+    const { conversationId, status, resetUnread, resetUnreadFor } = data
+    if (!conversationId) return { code: -1, msg: 'conversationId 必填' }
+    const update = { updatedAt: new Date() }
+    if (status) update.status = status
+    if (resetUnread) {
+      // 默认归零商家侧未读；可选归零用户侧
+      update.unreadMerchant = 0
+      if (resetUnreadFor === 'user') update.unreadUser = 0
+    }
+    await db.collection('conversations').doc(conversationId).update(update)
+    return { code: 0, data: { success: true } }
   },
 
   async getMessages(params) {
@@ -1231,30 +1542,92 @@ module.exports = {
     var params = params_unwrapped
     const where = {}
     if (params.conversationId) where.conversationId = params.conversationId
-    if (params.merchantId) where.merchantId = params.merchantId
-    const r = await db.collection('messages').where(where).orderBy('createdAt', 'asc').limit(100).get()
+    // 不按 merchantId 过滤：老消息 merchantId 可能是 'default'、'm_test_001' 等不一致值，
+    // 商家端 request 会自动注入当前 merchantId，过滤会查不到老数据
+    if (params.lastTimestamp) {
+      // 老数据用 createTime（毫秒时间戳）
+      const ts = Number(params.lastTimestamp)
+      if (!isNaN(ts)) {
+        where.createTime = dbCmd.gt(ts)
+      }
+    }
+    const r = await db.collection('messages').where(where).orderBy('createTime', 'asc').limit(200).get()
     return { code: 0, data: r.data || [] }
   },
 
   async sendMessage(data) {
     const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
     var data = data_unwrapped
-    const doc = { ...data, createdAt: new Date(), resolved: false }
-    if (!doc.conversationId) doc.conversationId = 'c_' + (data.merchantId || '') + '_' + (data.userId || '')
+    // 兼容老字段：senderType/senderId；role 视为 senderType 的别名
+    const senderType = data.senderType || data.role || 'merchant'
+    const senderId = data.senderId || (senderType === 'merchant' ? (data.merchantId || 'merchant') : (data.userId || ''))
+    const { content, type, conversationId: cidIn, senderName } = data
+    if (!content) return { code: -1, msg: 'content 必填' }
+    // 找 conversationId：优先用入参，否则按 merchantId+userId 查
+    let conversationId = cidIn
+    if (!conversationId && data.merchantId && data.userId) {
+      const c = await db.collection('conversations').where({ merchantId: data.merchantId, userId: data.userId }).limit(1).get()
+      if (c.data && c.data[0]) conversationId = c.data[0]._id
+    }
+    if (!conversationId) return { code: -1, msg: '会话不存在，请先 createConversation' }
+    const now = Date.now()
+    // 字段名跟老数据一致：senderId/senderType/createTime/isRead/type
+    const doc = {
+      conversationId,
+      senderId,
+      senderType,
+      senderName: senderName || '',
+      content,
+      type: type || 'text',
+      isRead: false,
+      createTime: now
+    }
     await db.collection('messages').add(doc)
-    await db.collection('conversations').where({ _id: doc.conversationId }).update({
-      lastMessage: data.content,
-      lastMessageAt: new Date(),
+    // 更新会话：lastMessage / lastMessageTime / 对方 unread++
+    const isFromMerchant = senderType === 'merchant'
+    const convUpdate = {
+      lastMessage: content,
+      lastMessageTime: now,
       updatedAt: new Date()
-    })
-    return { code: 0, data: { success: true } }
+    }
+    if (!isFromMerchant) {
+      try {
+        const cur = await db.collection('conversations').doc(conversationId).get()
+        if (cur.data && cur.data[0]) {
+          convUpdate.unreadMerchant = (cur.data[0].unreadMerchant || 0) + 1
+        }
+      } catch (e) {}
+    } else {
+      try {
+        const cur = await db.collection('conversations').doc(conversationId).get()
+        if (cur.data && cur.data[0]) {
+          convUpdate.unreadUser = (cur.data[0].unreadUser || 0) + 1
+        }
+      } catch (e) {}
+    }
+    await db.collection('conversations').doc(conversationId).update(convUpdate)
+    return { code: 0, data: { conversationId, message: { ...doc, createTime: now } } }
   },
 
   async markAsRead(params) {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
-    const where = { ...params }
-    await db.collection('messages').where(where).update({ read: true })
+    const { conversationId, senderType } = params
+    const where = {}
+    if (conversationId) where.conversationId = conversationId
+    if (senderType) where.senderType = senderType
+    if (Object.keys(where).length === 0) return { code: -1, msg: '至少传一个过滤条件' }
+    // 老数据用 isRead 字段
+    await db.collection('messages').where(where).update({ isRead: true })
+    // 同步把会话的对应端 unread 归零
+    if (conversationId) {
+      const convUpdate = { updatedAt: new Date() }
+      if (senderType === 'user') convUpdate.unreadMerchant = 0
+      if (senderType === 'merchant') convUpdate.unreadUser = 0
+      if (Object.keys(convUpdate).length > 1) {
+        await db.collection('conversations').doc(conversationId).update(convUpdate)
+      }
+    }
     return { code: 0, data: { success: true } }
   },
 
@@ -1363,13 +1736,15 @@ module.exports = {
   // ==================== 图片上传（占位） ====================
 
   async uploadImage(params) {
-    // 客户端走 uni.uploadFile，云端 event.fileID 是临时文件 ID
-    // 客户端可在 formData 里传 cloudPath 自定义路径
+    // 两种调用方式都支持：
+    // 1. 客户端 uni.uploadFile：event.fileID 是临时文件 ID，cloudPath 从 formData 进 event.cloudPath
+    // 2. 兼容旧代码通过 request() 传 fileID + cloudPath（params）
     const event = this.event || {}
     const fileID = event.fileID || (params && params.fileID)
     if (!fileID) return { code: -1, msg: 'fileID 必填（请通过 uni.uploadFile 触发）' }
     const ext = ((event.contentType || 'image/jpeg').split('/')[1] || 'jpg').replace(/[^a-z0-9]/gi, '')
-    const cloudPath = (params && params.cloudPath) || ('merchant/' + Date.now() + '.' + (ext || 'jpg'))
+    // cloudPath 优先从 formData (event.cloudPath) 读，否则从 params，最后兜底默认路径
+    const cloudPath = event.cloudPath || (params && params.cloudPath) || ('merchant/' + Date.now() + '.' + (ext || 'jpg'))
     try {
       const r = await uniCloud.uploadFile({ fileID, cloudPath })
       return { code: 0, data: { fileID: r.fileID, url: r.fileURL } }
@@ -1453,17 +1828,62 @@ module.exports = {
     const where = { status: 'active' }
     if (params.communityId) where.communityId = params.communityId
     if (params.userId) where.userId = params.userId
+    // 按分类名过滤(中文字符串);为空/'all' → 不过滤,返回全部
+    // 用 categoryName 而不是 categoryIndex 字段,是因为 categoryIndex 是后端动态分配,改顺序就变;categoryName 更稳定
+    if (params.categoryName && params.categoryName !== 'all') where.categoryName = params.categoryName
     const r = await db.collection('posts').where(where).orderBy('createdAt', 'desc').limit(50).get()
-    return { code: 0, data: r.data || [] }
+    const posts = r.data || []
+    // join users 表,补全发帖人昵称/头像(给用户端列表/详情页用)
+    // 主路径:post.userId → users._id
+    // 兜底路径:post._openid(uniCloud 内置,创建者 openid) → users.wxOpenId,处理老数据 userId 缺失
+    const userIds = [...new Set(posts.map(p => p.userId).filter(Boolean))]
+    const openids = [...new Set(posts.map(p => p._openid).filter(Boolean))]
+    console.log('[getPosts] post count:', posts.length, 'userIds:', userIds, 'openids:', openids)
+    const userMap = {} // key: user._id 或 user.wxOpenId
+    if (userIds.length > 0) {
+      const ur = await db.collection('users').where({ _id: dbCmd.in(userIds) }).field({ _id: true, nickname: true, avatar: true, wxOpenId: true }).get()
+      ;(ur.data || []).forEach(u => { userMap[u._id] = u; if (u.wxOpenId) userMap[u.wxOpenId] = u })
+    }
+    if (openids.length > 0) {
+      const ur = await db.collection('users').where({ wxOpenId: dbCmd.in(openids) }).field({ _id: true, nickname: true, avatar: true, wxOpenId: true }).get()
+      ;(ur.data || []).forEach(u => { userMap[u._id] = u; if (u.wxOpenId) userMap[u.wxOpenId] = u })
+    }
+    console.log('[getPosts] users resolved:', Object.keys(userMap).length, 'posts with authorNickname:', posts.filter(p => {
+      const u = (p.userId && userMap[p.userId]) || (p._openid && userMap[p._openid])
+      return u && u.nickname
+    }).length)
+    // 查 certifications 表,回填 isCertified
+    const certifiedUserIds = new Set()
+    if (userIds.length > 0) {
+      const cr = await db.collection('certifications').where({
+        userId: dbCmd.in(userIds),
+        status: 'certified'
+      }).field({ userId: true }).get()
+      ;(cr.data || []).forEach(c => { if (c.userId) certifiedUserIds.add(c.userId) })
+    }
+    console.log('[getPosts] certified users:', certifiedUserIds.size)
+    posts.forEach(p => {
+      const u = (p.userId && userMap[p.userId]) || (p._openid && userMap[p._openid]) || null
+      p.authorNickname = (u && u.nickname) || ''
+      p.authorAvatar = (u && u.avatar) || ''
+      p.isCertified = !!(p.userId && certifiedUserIds.has(p.userId))
+      // 兼容老字段名(老调用方还在用 likes/comments)
+      if (p.likeCount !== undefined && p.likes === undefined) p.likes = p.likeCount
+      if (p.commentCount !== undefined && p.comments === undefined) p.comments = p.commentCount
+    })
+    return { code: 0, data: posts }
   },
 
   async createPost(data) {
     const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
     var data = data_unwrapped
-    const doc = { ...data, likeCount: 0, commentCount: 0, status: 'active', createdAt: new Date(), updatedAt: new Date() }
-    if (!doc._id) doc._id = 'post_' + Date.now()
-    await db.collection('posts').add(doc)
-    return { code: 0, data: { _id: doc._id } }
+    // 白名单过滤:只接受这些字段,防止前端塞 status: 'admin' / role 等敏感字段
+    const allowKeys = ['_id', 'categoryIndex', 'categoryName', 'title', 'content', 'images', 'contactPhone', 'price', 'userId', 'authorName']
+    const safeDoc = { likeCount: 0, commentCount: 0, status: 'active', createdAt: new Date(), updatedAt: new Date() }
+    allowKeys.forEach(k => { if (data[k] !== undefined) safeDoc[k] = data[k] })
+    if (!safeDoc._id) safeDoc._id = 'post_' + Date.now()
+    await db.collection('posts').add(safeDoc)
+    return { code: 0, data: { _id: safeDoc._id } }
   },
 
   async toggleLike(params) {
@@ -1485,12 +1905,222 @@ module.exports = {
     return { code: 0, data: { liked: !liked, likeCount: likedUserIds.length } }
   },
 
+  async getComments(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { postId, page = 1, pageSize = 50 } = params
+    if (!postId) return { code: -1, msg: 'postId 必填' }
+    const r = await db.collection('comments').where({ postId, status: 'active' })
+      .orderBy('createdAt', 'asc')
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .get()
+    const list = r.data || []
+    // join users 取昵称/头像
+    const userIds = [...new Set(list.map(c => c.userId).filter(Boolean))]
+    const userMap = {}
+    if (userIds.length > 0) {
+      const ur = await db.collection('users').where({ _id: dbCmd.in(userIds) }).field({ _id: true, nickname: true, avatar: true }).get()
+      ;(ur.data || []).forEach(u => { userMap[u._id] = u })
+    }
+    list.forEach(c => {
+      const u = userMap[c.userId] || null
+      c.authorNickname = (u && u.nickname) || c.authorName || ''
+      c.authorAvatar = (u && u.avatar) || ''
+    })
+    return { code: 0, data: { list, total: list.length } }
+  },
+
+  async createComment(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { postId, userId, content, authorName } = params
+    if (!postId || !userId || !content) return { code: -1, msg: 'postId/userId/content 必填' }
+    const trimmed = String(content).trim().slice(0, 500)
+    if (!trimmed) return { code: -1, msg: '评论内容不能为空' }
+    const doc = {
+      _id: 'comment_' + Date.now() + '_' + Math.floor(Math.random() * 10000),
+      postId,
+      userId,
+      authorName: authorName || '',
+      content: trimmed,
+      status: 'active',
+      createdAt: new Date()
+    }
+    await db.collection('comments').add(doc)
+    // 帖子评论数 +1
+    try {
+      await db.collection('posts').doc(postId).update({ commentCount: dbCmd.inc(1) })
+    } catch (e) {
+      console.warn('[createComment] 更新 commentCount 失败:', e.message)
+    }
+    // 回填昵称/头像
+    try {
+      const ur = await db.collection('users').doc(userId).field({ nickname: true, avatar: true }).get()
+      const u = ur.data && ur.data[0]
+      if (u) {
+        doc.authorNickname = u.nickname || doc.authorName
+        doc.authorAvatar = u.avatar || ''
+      }
+    } catch (e) {}
+    return { code: 0, data: doc }
+  },
+
+  async togglePostStatus(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, status } = params
+    if (!id) return { code: -1, msg: 'id 必填' }
+    // 前端 0=隐藏 1=显示,映射成云端 'closed' / 'active'(与 getPosts 的 where.status = 'active' 对齐)
+    const mapped = (status === 1 || status === '1' || status === true || status === 'active' || status === 'online') ? 'active' : 'closed'
+    try {
+      await db.collection('posts').doc(id).update({ status: mapped, updatedAt: new Date() })
+      return { code: 0, data: { _id: id, status: mapped, display: mapped === 'active' } }
+    } catch (e) {
+      return { code: -1, msg: '更新失败:' + (e.message || e.errMsg || '') }
+    }
+  },
+
+  // 软删除帖子(用户端"我的发布"点删除走这里;与 neighbor_categories 软删模式一致,getPosts 过滤 status='active' 自动隐藏)
+  async deletePost(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    if (!id) return { code: -1, msg: 'id 必填' }
+    try {
+      await db.collection('posts').doc(id).update({ status: 'deleted', updatedAt: new Date() })
+      return { code: 0, data: { _id: id, status: 'deleted' } }
+    } catch (e) {
+      return { code: -1, msg: '删除失败:' + (e.message || e.errMsg || '') }
+    }
+  },
+
   async getMyPosts(params) {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
     const { userId, page, pageSize } = params
     const r = await db.collection('posts').where({ userId }).orderBy('createdAt', 'desc').get()
     return { code: 0, data: r.data || [] }
+  },
+
+  // ==================== 邻里分类管理(商家后台) ====================
+
+  async listNeighborCategories(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const r = await db.collection('neighbor_categories')
+      .where({ status: dbCmd.neq('deleted') })
+      .orderBy('sort', 'asc')
+      .orderBy('index', 'asc')
+      .get()
+    return { code: 0, data: { list: r.data || [] } }
+  },
+
+  async createNeighborCategory(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { name, sort = 0 } = params
+    if (!name || !String(name).trim()) return { code: -1, msg: '分类名不能为空' }
+    const last = await db.collection('neighbor_categories')
+      .orderBy('index', 'desc')
+      .limit(1)
+      .get()
+    const nextIndex = (last.data && last.data[0] && last.data[0].index) ? (last.data[0].index + 1) : 1
+    const doc = {
+      _id: 'ncat_' + Date.now(),
+      name: String(name).trim().slice(0, 20),
+      index: nextIndex,
+      sort: Number(sort) || 0,
+      status: 'active',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+    await db.collection('neighbor_categories').add(doc)
+    return { code: 0, data: doc }
+  },
+
+  async updateNeighborCategory(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, name, sort } = params
+    if (!id) return { code: -1, msg: 'id 必填' }
+    const upd = { updatedAt: new Date() }
+    if (name !== undefined) {
+      if (!String(name).trim()) return { code: -1, msg: '分类名不能为空' }
+      upd.name = String(name).trim().slice(0, 20)
+    }
+    if (sort !== undefined) upd.sort = Number(sort) || 0
+    await db.collection('neighbor_categories').doc(id).update(upd)
+    return { code: 0, data: { _id: id, ...upd } }
+  },
+
+  async deleteNeighborCategory(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    if (!id) return { code: -1, msg: 'id 必填' }
+    await db.collection('neighbor_categories').doc(id).update({ status: 'deleted', updatedAt: new Date() })
+    return { code: 0, data: { _id: id, status: 'deleted' } }
+  },
+
+  // 一次性初始化邻里分类(只在库里没数据时塞 5 条默认)
+  async seedNeighborCategories() {
+    const existing = await db.collection('neighbor_categories').where({ status: dbCmd.neq('deleted') }).limit(1).get()
+    if (existing.data && existing.data.length > 0) {
+      return { code: 0, msg: '已有数据,跳过', data: { skipped: true, count: existing.data.length } }
+    }
+    const defaults = [
+      { name: '邻里互助', sort: 0 },
+      { name: '手艺服务', sort: 0 },
+      { name: '相约同行', sort: 0 },
+      { name: '相亲交友', sort: 0 },
+      { name: '二手闲置', sort: 0 }
+    ]
+    const now = new Date()
+    for (let i = 0; i < defaults.length; i++) {
+      await db.collection('neighbor_categories').add({
+        _id: 'ncat_seed_' + (i + 1),
+        name: defaults[i].name,
+        index: i + 1,
+        sort: defaults[i].sort,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now
+      })
+    }
+    return { code: 0, msg: '已初始化 5 条', data: { skipped: false, count: defaults.length } }
+  },
+
+  // ==================== 文件上传（base64 通道，用户端无 uniCloud 绑定时走这里） ====================
+
+  // 接收 { fileData: 'data:image/jpeg;base64,xxx', cloudPath: 'certs/xxx.jpg' }
+  // 把 base64 解码后存到云存储，返回 fileID（cloud://xxx）
+  // 用法：用户端用 getFileSystemManager().readFileSync(tempPath, 'base64') 后 POST 过来
+  // 注意：方法名必须保留为 uploadImageBase64（不能叫 uploadImage），否则会和上面 line 1683 的
+  // uni.uploadFile 版同名覆盖，导致 uni.uploadFile 通道走不到 fileID 逻辑
+  async uploadImageBase64(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { fileData, cloudPath } = params
+    if (!fileData) return { code: -1, msg: 'fileData 必填' }
+    if (!cloudPath) return { code: -1, msg: 'cloudPath 必填' }
+    // 解析 data URI
+    let base64Str = fileData
+    if (fileData.startsWith('data:')) {
+      const m = fileData.match(/^data:[^;]+;base64,(.+)$/)
+      if (!m) return { code: -1, msg: 'fileData 格式错误（需为 data:mime;base64,xxx）' }
+      base64Str = m[1]
+    }
+    try {
+      const buffer = Buffer.from(base64Str, 'base64')
+      if (!buffer || buffer.length === 0) return { code: -1, msg: 'base64 解码后为空' }
+      // 限制单文件 5MB（防止滥用）
+      if (buffer.length > 5 * 1024 * 1024) return { code: -1, msg: '文件超过 5MB 限制' }
+      const result = await uniCloud.uploadFile({ cloudPath, fileContent: buffer })
+      return { code: 0, data: { fileID: result.fileID } }
+    } catch (e) {
+      return { code: -1, msg: '上传失败: ' + (e.message || e.errMsg || '未知错误') }
+    }
   },
 
   // ==================== 认证（Certifications） ====================
@@ -1506,24 +2136,289 @@ module.exports = {
   async submitCert(data) {
     const data_unwrapped = ((data && data.params) || (data && Object.keys(data).length ? data : null) || (this.event && this.event.params) || this.event || {})
     var data = data_unwrapped
-    const doc = { ...data, status: 'pending', createdAt: new Date(), updatedAt: new Date() }
-    if (!doc._id) doc._id = 'cert_' + Date.now()
-    await db.collection('certifications').add(doc)
-    return { code: 0, data: { _id: doc._id } }
+    const { userId } = data
+    if (!userId) return { code: -1, msg: 'userId 必填' }
+    // 确定性 _id：一个用户只允许一条认证记录
+    const certId = 'cert_' + userId
+    const existing = await db.collection('certifications').doc(certId).get()
+    if (existing.data && existing.data[0]) {
+      const cur = existing.data[0]
+      if (cur.status === 'pending' || cur.status === 'certified') {
+        return { code: -1, msg: cur.status === 'pending' ? '认证审核中，请勿重复提交' : '已认证，无需重复提交' }
+      }
+      // none / rejected：覆盖旧记录
+      await db.collection('certifications').doc(certId).update({
+        ...data, status: 'pending', rejectReason: '', reviewedAt: null, createdAt: new Date(), updatedAt: new Date()
+      })
+    } else {
+      const doc = { ...data, _id: certId, status: 'pending', createdAt: new Date(), updatedAt: new Date() }
+      await db.collection('certifications').add(doc)
+    }
+    return { code: 0, data: { _id: certId } }
+  },
+
+  // 用户主动重置自己的认证（"已认证"页点重新认证时调用）
+  // 把 cert 表状态和 users.certStatus 都清回 'none'
+  async resetMyCert(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { userId } = params
+    if (!userId) return { code: -1, msg: 'userId 必填' }
+    const certId = 'cert_' + userId
+    const existing = await db.collection('certifications').doc(certId).get()
+    if (existing.data && existing.data[0]) {
+      await db.collection('certifications').doc(certId).update({
+        status: 'none', rejectReason: '', reviewedAt: null, reviewedBy: '', updatedAt: new Date()
+      })
+    }
+    await db.collection('users').doc(userId).update({ certStatus: 'none', updatedAt: new Date() })
+    return { code: 0, data: { success: true } }
+  },
+
+  // ==================== 微信登录（WeChat） ====================
+
+  // 微信一键登录：前端 wx.login() 拿 code，传给云端，云端 code2Session 拿 openid，查/建 user
+  async loginByWeixin(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { code } = params
+    if (!code) return { code: -1, msg: 'code 必填' }
+    const secret = process.env.WX_APPSECRET
+    if (!secret) return { code: -1, msg: '云函数未配置 WX_APPSECRET 环境变量' }
+    const r = await uniCloud.httpclient.request(
+      `https://api.weixin.qq.com/sns/jscode2session?appid=${WX_APPID}&secret=${secret}&js_code=${code}&grant_type=authorization_code`,
+      { method: 'GET', dataType: 'json' }
+    )
+    if (r.data && r.data.errcode) {
+      return { code: -1, msg: '微信登录失败: ' + (r.data.errmsg || r.data.errcode) }
+    }
+    const { openid, unionid } = r.data
+    // 查 user
+    const exist = await db.collection('users').where({ wxOpenId: openid }).get()
+    let user, isNew = false
+    if (exist.data && exist.data[0]) {
+      user = exist.data[0]
+      // 存量老用户没有 account 的补一个
+      if (!user.account) {
+        user.account = await generateUniqueAccount()
+        await db.collection('users').doc(user._id).update({ account: user.account, updatedAt: new Date() })
+      }
+    } else {
+      isNew = true
+      const _id = 'u_wx_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
+      const account = await generateUniqueAccount()
+      user = {
+        _id, account, wxOpenId: openid, wxUnionId: unionid || '',
+        nickname: '微信用户', avatar: 'https://img.icons8.com/color/96/user.png',
+        phone: '', certStatus: 'none', communityId: '',
+        createdAt: new Date(), updatedAt: new Date()
+      }
+      await db.collection('users').add(user)
+    }
+    const token = 'wx_' + user._id
+    const tokenExpired = Date.now() + 30 * 24 * 3600 * 1000
+    return { code: 0, data: { token, tokenExpired, userInfo: user, isNew } }
+  },
+
+  // 绑定微信手机号：getPhoneNumber 拿到一次性 code，云端调 getuserphonenumber 解密
+  // 同手机号自动合并：老 SMS 账户（无 wxOpenId）合并到新微信用户；已绑其他微信则拒绝
+  async bindWxPhone(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { code, userId } = params
+    if (!code || !userId) return { code: -1, msg: 'code 和 userId 必填' }
+    let accessToken
+    try {
+      accessToken = await getWxAccessToken()
+    } catch (e) {
+      return { code: -1, msg: e.message || 'access_token 获取失败' }
+    }
+    const r = await uniCloud.httpclient.request(
+      `https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=${accessToken}`,
+      { method: 'POST', contentType: 'json', data: { code }, dataType: 'json' }
+    )
+    if (r.data && r.data.errcode) {
+      return { code: -1, msg: '获取手机号失败: ' + (r.data.errmsg || r.data.errcode) }
+    }
+    const phone = r.data.phone_info && r.data.phone_info.phoneNumber
+    if (!phone) return { code: -1, msg: '手机号解析失败' }
+
+    const cur = await db.collection('users').doc(userId).get()
+    const curUser = cur.data && cur.data[0]
+    if (!curUser) return { code: -1, msg: '用户不存在' }
+
+    // 查同手机号
+    const samePhone = await db.collection('users').where({ phone }).get()
+    let merged = false, targetUserId = userId
+    if (samePhone.data && samePhone.data[0] && samePhone.data[0]._id !== userId) {
+      const old = samePhone.data[0]
+      if (old.wxOpenId) {
+        return { code: -1, msg: '该手机号已绑定其他微信账号' }
+      }
+      // 老 SMS 账户：合并到老的（保留历史订单/认证/地址）
+      await db.collection('users').doc(old._id).update({
+        wxOpenId: curUser.wxOpenId,
+        wxUnionId: curUser.wxUnionId || '',
+        nickname: curUser.nickname || old.nickname,
+        avatar: curUser.avatar || old.avatar,
+        updatedAt: new Date()
+      })
+      // 删新建的临时 user
+      await db.collection('users').doc(userId).remove()
+      targetUserId = old._id
+      merged = true
+    } else {
+      await db.collection('users').doc(userId).update({ phone, updatedAt: new Date() })
+    }
+    const after = await db.collection('users').doc(targetUserId).get()
+    // 确保 target user 有 account
+    if (after.data[0] && !after.data[0].account) {
+      const account = await generateUniqueAccount()
+      await db.collection('users').doc(targetUserId).update({ account, updatedAt: new Date() })
+      after.data[0].account = account
+    }
+    return { code: 0, data: { userInfo: after.data[0], merged, userId: targetUserId } }
+  },
+
+  // 更新昵称/头像（profile-complete 提交时调用）
+  async updateProfile(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { userId, nickname, avatar, gender, birthday } = params
+    if (!userId) return { code: -1, msg: 'userId 必填' }
+    const update = { updatedAt: new Date() }
+    if (nickname !== undefined) update.nickname = nickname
+    if (avatar) update.avatar = avatar
+    if (gender !== undefined) update.gender = gender
+    if (birthday !== undefined) update.birthday = birthday || null
+    await db.collection('users').doc(userId).update(update)
+    const after = await db.collection('users').doc(userId).get()
+    return { code: 0, data: { userInfo: after.data && after.data[0] } }
+  },
+
+  // 拉取当前用户的最新信息（解决 storage 缓存不一致问题）
+  async getMyUserInfo(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { userId } = params
+    if (!userId) return { code: -1, msg: 'userId 必填' }
+    const r = await db.collection('users').doc(userId).get()
+    const userInfo = r.data && r.data[0]
+    if (!userInfo) return { code: -1, msg: '用户不存在' }
+    // 存量用户懒回填 account
+    if (!userInfo.account) {
+      userInfo.account = await generateUniqueAccount()
+      await db.collection('users').doc(userId).update({ account: userInfo.account, updatedAt: new Date() })
+    }
+    return { code: 0, data: { userInfo } }
   },
 
   async checkCert(params) {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
     const { id, action, rejectReason } = params
-    const status = action === 'approve' ? 'certified' : 'rejected'
-    await db.collection('certifications').doc(id).update({
-      status,
-      rejectReason: action === 'approve' ? '' : (rejectReason || ''),
-      reviewedAt: new Date(),
-      updatedAt: new Date()
-    })
-    return { code: 0, data: { success: true } }
+    if (!id || !action) return { code: -1, msg: 'id 和 action 必填' }
+    let update
+    if (action === 'approve') {
+      update = { status: 'certified', rejectReason: '', reviewedAt: new Date() }
+    } else if (action === 'reject') {
+      update = { status: 'rejected', rejectReason: rejectReason || '资料不符合要求', reviewedAt: new Date() }
+    } else if (action === 'revoke') {
+      // 撤销：清空状态回到 'none'，让用户回到"未认证"初始态重新上传资料
+      // （如果用 'pending'，用户端看到"审核中"但又没在审，无重新提交入口，会卡住）
+      update = { status: 'none', rejectReason: '', reviewedAt: null }
+    } else {
+      return { code: -1, msg: 'action 必须是 approve/reject/revoke' }
+    }
+    update.updatedAt = new Date()
+    await db.collection('certifications').doc(id).update(update)
+    // 同步 users.certStatus（撤销时同步回 'none'，让用户端能立刻重新提交）
+    const cur = await db.collection('certifications').doc(id).get()
+    const c = cur.data && cur.data[0]
+    if (c && c.userId) {
+      await db.collection('users').doc(c.userId).update({ certStatus: update.status, updatedAt: new Date() })
+    }
+    return { code: 0, data: { success: true, newStatus: update.status } }
+  },
+
+  // 商家端认证审核列表
+  async listCertifications(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.status && params.status !== 'all') where.status = params.status
+    const keyword = (params.keyword || '').trim()
+    const page = params.page || 1
+    const pageSize = params.pageSize || 20
+    // 拉一批后内存去重：同 userId 只保留 createdAt 最新的一条
+    // 解决历史脏数据（重复提交产生的多条 cert_xxxx 记录）显示问题
+    const big = await db.collection('certifications').where(where).limit(1000).orderBy('createdAt', 'desc').get()
+    const seen = new Set()
+    const deduped = []
+    for (const c of (big.data || [])) {
+      if (!c.userId) continue
+      if (seen.has(c.userId)) continue
+      seen.add(c.userId)
+      deduped.push(c)
+    }
+    let list
+    if (keyword) {
+      list = deduped.filter(c =>
+        (c.userName && c.userName.includes(keyword)) ||
+        (c.name && c.name.includes(keyword)) ||
+        (c.phone && c.phone.includes(keyword)) ||
+        (c.communityName && c.communityName.includes(keyword))
+      )
+    } else {
+      list = deduped
+    }
+    const total = list.length
+    const sliced = list.slice((page - 1) * pageSize, page * pageSize)
+    await resolveFileIdsInItems(sliced)
+    return { code: 0, data: { list: sliced, total } }
+  },
+
+  // 商家端全量帖子（按状态/分类过滤 + 关键词搜索）
+  async listAllPosts(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const where = {}
+    if (params.status && params.status !== 'all') where.status = params.status
+    const keyword = (params.keyword || '').trim()
+    const page = params.page || 1
+    const pageSize = params.pageSize || 20
+    if (keyword) {
+      const big = await db.collection('posts').where(where).limit(500).orderBy('createdAt', 'desc').get()
+      const list = (big.data || []).filter(o =>
+        (o.title && o.title.includes(keyword)) ||
+        (o.content && o.content.includes(keyword)) ||
+        (o.authorName && o.authorName.includes(keyword))
+      )
+      const sliced = list.slice((page - 1) * pageSize, page * pageSize)
+      await resolveFileIdsInItems(sliced)
+      return { code: 0, data: { list: sliced, total: list.length } }
+    }
+    const r = await db.collection('posts').where(where)
+      .skip((page - 1) * pageSize).limit(pageSize).orderBy('createdAt', 'desc').get()
+    const list = r.data || []
+    await resolveFileIdsInItems(list)  // 图片 fileID → https 临时 URL
+    return { code: 0, data: { list, total: list.length } }
+  },
+
+  // 帖子管理：下架 closed / 上架 active / 删除 deleted（软删）
+  async adminOperatePost(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, action, reason } = params
+    if (!id || !action) return { code: -1, msg: 'id 和 action 必填' }
+    let update
+    if (action === 'offline') update = { status: 'closed', downReason: reason || '', downAt: new Date() }
+    else if (action === 'online') update = { status: 'active', downReason: '', downAt: null }
+    else if (action === 'delete') update = { status: 'deleted', downReason: reason || '商家删除', downAt: new Date() }
+    else return { code: -1, msg: 'action 必须是 offline/online/delete' }
+    update.updatedAt = new Date()
+    await db.collection('posts').doc(id).update(update)
+    return { code: 0, data: { success: true, newStatus: update.status } }
   },
 
   // ==================== 用户注册（测试用） ====================

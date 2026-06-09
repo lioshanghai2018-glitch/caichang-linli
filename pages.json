@@ -13,7 +13,9 @@
       "style": {
         "navigationBarTitleText": "订单管理",
         "navigationBarBackgroundColor": "#F5F1EB",
-        "navigationBarTextStyle": "black"
+        "navigationBarTextStyle": "black",
+        "enablePullDownRefresh": true,
+        "backgroundColor": "#F5F1EB"
       }
     },
     {
@@ -108,6 +110,33 @@
       "path": "pages/category/add",
       "style": {
         "navigationBarTitleText": "新增分类",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/audit/index",
+      "style": {
+        "navigationBarTitleText": "审核中心",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/community/list",
+      "style": {
+        "navigationBarTitleText": "小区管理",
+        "navigationBarBackgroundColor": "#F5F1EB",
+        "navigationBarTextStyle": "black",
+        "enablePullDownRefresh": true,
+        "backgroundColor": "#F5F1EB"
+      }
+    },
+    {
+      "path": "pages/community/add",
+      "style": {
+        "navigationBarTitleText": "新增小区",
         "navigationBarBackgroundColor": "#F5F1EB",
         "navigationBarTextStyle": "black"
       }

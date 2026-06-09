@@ -160,11 +160,31 @@ export const deleteRider = (id) => request('deleteRider', { id })
 
 // ==================== 小区 ====================
 export const getCommunities = () => request('getCommunities')
+export const addCommunity = (data) => request('addCommunity', data)
+export const updateCommunity = (id, data) => request('updateCommunity', { id, ...data })
+export const deleteCommunity = (id) => request('deleteCommunity', { id })
 
 // ==================== 客服消息 ====================
-export const getMessages = (type = 'pending') => request('getMessages', { type })
-export const replyMessage = (messageId, content) =>
-  request('sendMessage', { messageId, role: 'merchant', content })
+export const getConversations = (params = {}) => request('getConversations', params)
+export const createConversation = (data) => request('createConversation', data)
+export const updateConversation = (data) => request('updateConversation', data)
+export const getMessages = (params = {}) => request('getMessages', params)
+export const sendMessage = (data) => request('sendMessage', data)
+export const markAsRead = (params) => request('markAsRead', params)
+
+// ==================== 认证审核（商家端）====================
+export const listCertifications = (params = {}) => request('listCertifications', params)
+export const reviewCert = (id, action, rejectReason = '') => request('checkCert', { id, action, rejectReason })
+
+// ==================== 贴子管理（商家端）====================
+export const listAllPosts = (params = {}) => request('listAllPosts', params)
+export const operatePost = (id, action, reason = '') => request('adminOperatePost', { id, action, reason })
+
+// ==================== 邻里分类管理（商家端）====================
+export const listNeighborCategories = () => request('listNeighborCategories')
+export const createNeighborCategory = (name, sort = 0) => request('createNeighborCategory', { name, sort })
+export const updateNeighborCategory = (id, data) => request('updateNeighborCategory', { id, ...data })
+export const deleteNeighborCategory = (id) => request('deleteNeighborCategory', { id })
 
 // ==================== 默认导出：request ====================
 export default request

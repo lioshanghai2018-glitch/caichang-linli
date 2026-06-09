@@ -92,7 +92,7 @@ export default {
       todoList: [
         { title: '待分拣订单', count: 0, icon: '📦', iconBg: '#FFF3E0', link: '/pages/order/list?status=pending_sorting' },
         { title: '待回复消息', count: 0, icon: '💬', iconBg: '#E8F5E9', link: '/pages/service/list' },
-        { title: '待审核认证', count: 0, icon: '✅', iconBg: '#E3F2FD', link: '' }
+        { title: '待审核认证', count: 0, icon: '🛡', iconBg: '#E3F2FD', link: '/pages/audit/index' }
       ],
       menuSections: [
         {
@@ -101,7 +101,7 @@ export default {
             { name: '订单管理', icon: '📋', iconBg: '#E8F5E9', page: '/pages/order/list' },
             { name: '商品管理', icon: '🥬', iconBg: '#E8F5E9', page: '/pages/product/list' },
             { name: '骑手管理', icon: '🏍', iconBg: '#E8F5E9', page: '/pages/rider/list' },
-            { name: '小区管理', icon: '🏘', iconBg: '#E8F5E9', page: '' }
+            { name: '小区管理', icon: '🏘', iconBg: '#E8F5E9', page: '/pages/community/list' }
           ]
         },
         {
@@ -115,7 +115,7 @@ export default {
           title: '客服',
           items: [
             { name: '客服消息', icon: '💬', iconBg: '#E3F2FD', page: '/pages/service/list', badge: 0 },
-            { name: '认证审核', icon: '✅', iconBg: '#E8F5E9', page: '' }
+            { name: '审核中心', icon: '🛡', iconBg: '#E8F5E9', page: '/pages/audit/index' }
           ]
         },
         {

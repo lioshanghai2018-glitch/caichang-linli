@@ -7,7 +7,8 @@
     "merchantId": { "bsonType": "string", "title": "所属商家" },
     "userId": { "bsonType": "string", "title": "下单用户" },
     "riderId": { "bsonType": "string", "title": "骑手ID", "defaultValue": "" },
-    "status": { "bsonType": "string", "title": "订单状态", "defaultValue": "pending_payment", "description": "pending_payment / paid / pending_sorting / sorting / delivering / completed / cancelled / refunding / refunded" },
+    "deliveryType": { "bsonType": "string", "title": "配送方式", "defaultValue": "self", "description": "self=自提 / delivery=配送", "enum": ["self", "delivery"] },
+    "status": { "bsonType": "string", "title": "订单状态", "defaultValue": "pending_payment", "description": "pending_payment / paid / pending_sorting / sorting / delivering / ready_for_pickup / completed / cancelled / refunding / refunded" },
     "deliveryStatus": { "bsonType": "string", "title": "配送状态", "defaultValue": "", "description": "accepted / picked_up / delivering / completed" },
     "items": { "bsonType": "array", "title": "订单商品", "defaultValue": [] },
     "totalAmount": { "bsonType": "double", "title": "订单总额", "defaultValue": 0 },
@@ -22,6 +23,7 @@
     "deliveryCompleteTime": { "bsonType": "datetime" },
     "completedAt": { "bsonType": "datetime" },
     "cancelledAt": { "bsonType": "datetime" },
+    "stockDeducted": { "bsonType": "bool", "title": "库存已扣减", "defaultValue": false, "description": "true=已扣减库存，取消/退款时据此回补" },
     "version": { "bsonType": "int", "title": "乐观锁", "defaultValue": 1 },
     "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
     "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }

@@ -43,7 +43,10 @@
   <!-- 客户信息 -->
   <view class="card customer-card">
     <view class="card-header">
-      <text class="card-title">客户信息</text>
+      <text class="card-title">{{orderInfo.deliveryType === 'self' ? '自提客户信息' : '客户信息'}}</text>
+      <view class="delivery-type-badge" :class="orderInfo.deliveryType">
+        <text>{{orderInfo.deliveryType === 'delivery' ? '配送单' : '自提单'}}</text>
+      </view>
     </view>
     <view class="info-row">
       <text class="info-label">客户姓名</text>
@@ -54,8 +57,12 @@
       <text class="info-value">{{orderInfo.customer.phone}}</text>
       <text class="call-btn" @tap="callCustomer">拨打电话</text>
     </view>
-    <view class="info-row">
+    <view class="info-row" v-if="orderInfo.deliveryType !== 'self'">
       <text class="info-label">配送地址</text>
+      <text class="info-value address">{{orderInfo.customer.address}}</text>
+    </view>
+    <view class="info-row" v-if="orderInfo.deliveryType === 'self' && orderInfo.customer.address">
+      <text class="info-label">备注</text>
       <text class="info-value address">{{orderInfo.customer.address}}</text>
     </view>
     <view class="info-row" v-if="orderInfo.customer.pickupCode">
@@ -130,6 +137,15 @@
     <view class="action-btn primary" v-if="orderInfo.canConfirm" @tap="confirmOrder">
       <text class="btn-text">确认分拣</text>
     </view>
+    <view class="action-btn primary" v-else-if="orderInfo.canReadyForPickup" @tap="readyForPickup">
+      <text class="btn-text">通知用户自提</text>
+    </view>
+    <view class="action-btn primary" v-else-if="orderInfo.canCompleteSelf" @tap="merchantCompleteSelf">
+      <text class="btn-text">用户已取货</text>
+    </view>
+    <view class="action-btn primary" v-else-if="orderInfo.canDeliver" @tap="startDeliver">
+      <text class="btn-text">开始配送</text>
+    </view>
   </view>
 
   <view class="bottom-placeholder"></view>
@@ -143,7 +159,8 @@ const STATUS_STYLE = {
   pending_payment: { text: '待付款', hint: '请尽快完成支付', color: '#FF6B00', bg: '#FFF3E0' },
   paid: { text: '已付款', hint: '请尽快分拣商品', color: '#FF6B00', bg: '#FFF3E0' },
   pending_sorting: { text: '待分拣', hint: '请尽快分拣商品', color: '#FF6B00', bg: '#FFF3E0' },
-  sorting: { text: '待配送', hint: '已分拣打包好，等待骑手取单', color: '#FF6B00', bg: '#FFF3E0' },
+  sorting: { text: '待分拣完成', hint: '已分拣打包好，可通知自提或等待骑手取单', color: '#FF6B00', bg: '#FFF3E0' },
+  ready_for_pickup: { text: '待自提', hint: '已通知用户，请等待用户到店自提', color: '#FF6B00', bg: '#FFF3E0' },
   delivering: { text: '配送中', hint: '骑手正在配送', color: '#4CAF50', bg: '#E8F5E9' },
   completed: { text: '已完成', hint: '订单已完成', color: '#999999', bg: '#F5F5F5' },
   cancelled: { text: '已取消', hint: '订单已取消', color: '#999999', bg: '#F5F5F5' },
@@ -152,19 +169,28 @@ const STATUS_STYLE = {
   // 中文 fallback（用户端历史脏数据，等用户端修好后会统一用英文 enum）
   '待付款': { text: '待付款', hint: '请尽快完成支付', color: '#FF6B00', bg: '#FFF3E0' },
   '已接单': { text: '已接单', hint: '请尽快分拣商品', color: '#FF6B00', bg: '#FFF3E0' },
-  '已付款': { text: '已付款', hint: '请尽快分拣商品', color: '#FF6B00', bg: '#FFF3E0' }
+  '已付款': { text: '已付款', hint: '请尽快分拣商品', color: '#FF6B00', bg: '#FFF3E0' },
+  '待自提': { text: '待自提', hint: '已通知用户，请等待用户到店自提', color: '#FF6B00', bg: '#FFF3E0' }
 }
 
-const STEPS = [
+const STEPS_DELIVERY = [
   { key: 'pending_payment', label: '待付款' },
   { key: 'pending_sorting', label: '待分拣' },
   { key: 'delivering', label: '配送中' },
   { key: 'completed', label: '已完成' }
 ]
 
-// status → 进度条亮到第几步（0..3 表示亮 1..4 步）
-// 同时兼容英文 enum 和历史中文脏数据
-const STEP_IDX = {
+// 自提单 5 步：待付款 → 待分拣 → 分拣中 → 待自提 → 已完成
+const STEPS_SELF = [
+  { key: 'pending_payment', label: '待付款' },
+  { key: 'pending_sorting', label: '待分拣' },
+  { key: 'sorting', label: '分拣中' },
+  { key: 'ready_for_pickup', label: '待自提' },
+  { key: 'completed', label: '已完成' }
+]
+
+// 配送单 status → 进度条亮到第几步（0..3）
+const STEP_IDX_DELIVERY = {
   pending_payment: 0,
   paid: 1,
   pending_sorting: 1,
@@ -174,7 +200,7 @@ const STEP_IDX = {
   cancelled: 3,
   refunding: 1,
   refunded: 3,
-  // 中文 fallback（用户端历史脏数据）
+  // 中文 fallback
   '待付款': 0,
   '已接单': 1,
   '已付款': 1,
@@ -184,6 +210,29 @@ const STEP_IDX = {
   '已完成': 3,
   '已取消': 3,
   '已退款': 3
+}
+
+// 自提单 status → 进度条亮到第几步（0..4）
+const STEP_IDX_SELF = {
+  pending_payment: 0,
+  paid: 1,
+  pending_sorting: 1,
+  sorting: 2,
+  ready_for_pickup: 3,
+  completed: 4,
+  cancelled: 4,
+  refunding: 1,
+  refunded: 4,
+  // 中文 fallback
+  '待付款': 0,
+  '已接单': 1,
+  '已付款': 1,
+  '待分拣': 1,
+  '分拣中': 2,
+  '待自提': 3,
+  '已完成': 4,
+  '已取消': 4,
+  '已退款': 4
 }
 
 function fmtTime(t) {
@@ -207,17 +256,20 @@ export default {
     return {
       orderInfo: {
         orderNo: '',
+        deliveryType: 'delivery',
         statusText: '',
         statusColor: '#999',
         statusBg: '#F5F5F5',
         statusHint: '',
-        progress: STEPS.map(s => ({ label: s.label, time: '', completed: false, active: false })),
+        progress: STEPS_DELIVERY.map(s => ({ label: s.label, time: '', completed: false, active: false })),
         customer: { name: '', phone: '', address: '', pickupCode: '' },
         goods: [],
         fee: { goodsAmount: '0.00', deliveryFee: '0.00', discount: '0.00', payAmount: '0.00' },
         times: { created: '', paid: '' },
         canConfirm: false,
-        canDeliver: false
+        canDeliver: false,
+        canReadyForPickup: false,
+        canCompleteSelf: false
       },
       loading: true,
       orderId: ''
@@ -238,6 +290,10 @@ export default {
           return
         }
         const style = STATUS_STYLE[o.status] || { text: o.status || '待处理', hint: '', color: '#999', bg: '#F5F5F5' }
+        const deliveryType = o.deliveryType || 'self'
+        const isSelf = deliveryType === 'self'
+        const STEPS = isSelf ? STEPS_SELF : STEPS_DELIVERY
+        const STEP_IDX = isSelf ? STEP_IDX_SELF : STEP_IDX_DELIVERY
         const stepIdx = (STEP_IDX[o.status] != null) ? STEP_IDX[o.status] : 0
         const items = o.items || []
         const goods = items.map(it => ({
@@ -252,6 +308,7 @@ export default {
         const discount = Number(o.coupon != null ? String(o.coupon).replace('¥','').replace('-','') : 0)
         this.orderInfo = {
           orderNo: o.orderNo,
+          deliveryType,
           statusText: style.text,
           statusColor: style.color,
           statusBg: style.bg,
@@ -280,7 +337,9 @@ export default {
             paid: o.paidAt ? fmtTime(o.paidAt) : ''
           },
           canConfirm: ['paid', 'pending_sorting', '已接单', '已付款'].includes(o.status),
-          canDeliver: o.status === 'sorting'
+          canDeliver: !isSelf && o.status === 'sorting',
+          canReadyForPickup: isSelf && o.status === 'sorting',
+          canCompleteSelf: isSelf && o.status === 'ready_for_pickup'
         }
       } catch (e) {
         uni.showToast({ title: e.msg || '加载失败', icon: 'none' })
@@ -306,13 +365,37 @@ export default {
     },
     async confirmOrder() {
       try {
-        // 商家分拣完毕，订单进入 sorting（待配送）状态，骑手可以取单
+        // 商家分拣完毕，订单进入 sorting（待配送/待通知自提）状态
         await updateOrderStatus(this.orderInfo.orderNo, 'sorting')
         uni.showToast({ title: '已确认分拣', icon: 'success' })
         this.loadDetail()
       } catch (e) {
         uni.showToast({ title: e.msg || '操作失败', icon: 'none' })
       }
+    },
+    async readyForPickup() {
+      try {
+        // 自提单：分拣完毕通知用户来取
+        await updateOrderStatus(this.orderInfo.orderNo, 'ready_for_pickup')
+        uni.showToast({ title: '已通知用户自提', icon: 'success' })
+        this.loadDetail()
+      } catch (e) {
+        uni.showToast({ title: e.msg || '操作失败', icon: 'none' })
+      }
+    },
+    async merchantCompleteSelf() {
+      try {
+        // 自提单：商家侧确认用户已取货
+        await updateOrderStatus(this.orderInfo.orderNo, 'completed')
+        uni.showToast({ title: '已完成自提', icon: 'success' })
+        this.loadDetail()
+      } catch (e) {
+        uni.showToast({ title: e.msg || '操作失败', icon: 'none' })
+      }
+    },
+    async startDeliver() {
+      // 配送单：当前是 sorting 状态，等待骑手抢单；按钮仅展示用，不主动改 status
+      uni.showToast({ title: '等待骑手接单配送', icon: 'none' })
     },
   }
 }
@@ -475,6 +558,26 @@ export default {
   font-size: 30rpx;
   font-weight: 600;
   color: #000000;
+}
+.delivery-type-badge {
+  padding: 4rpx 16rpx;
+  border-radius: 6rpx;
+}
+.delivery-type-badge text {
+  font-size: 24rpx;
+  font-weight: 500;
+}
+.delivery-type-badge.delivery {
+  background: #E3F2FD;
+}
+.delivery-type-badge.delivery text {
+  color: #1976D2;
+}
+.delivery-type-badge.self {
+  background: #FFF3E0;
+}
+.delivery-type-badge.self text {
+  color: #FF6B00;
 }
 
 /* 客户信息 */

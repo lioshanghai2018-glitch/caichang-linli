@@ -3,12 +3,15 @@
   "required": ["_id"],
   "properties": {
     "_id": { "bsonType": "string", "description": "uni-id 账号 _id" },
+    "account": { "bsonType": "string", "title": "账号", "defaultValue": "", "description": "8 位数字+大写字母，唯一，用于查询用户" },
     "nickname": { "bsonType": "string", "title": "昵称" },
     "avatar": { "bsonType": "string", "title": "头像", "defaultValue": "" },
     "phone": { "bsonType": "string", "title": "手机号" },
     "password": { "bsonType": "string", "title": "密码", "defaultValue": "", "description": "明文或加密密码（联调模式用明文）" },
     "communityId": { "bsonType": "string", "title": "小区ID", "defaultValue": "" },
     "certStatus": { "bsonType": "string", "title": "认证状态", "defaultValue": "none", "description": "none/pending/certified/rejected" },
+    "gender": { "bsonType": "string", "title": "性别", "defaultValue": "", "description": "男/女；空字符串表示未设置（显示'未知'）" },
+    "birthday": { "bsonType": "string", "title": "生日", "description": "MM-DD 格式" },
     "pushClientId": { "bsonType": "string", "title": "推送ID", "defaultValue": "" },
     "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
     "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
