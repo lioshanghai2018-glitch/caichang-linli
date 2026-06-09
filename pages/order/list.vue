@@ -160,10 +160,7 @@ export default {
           pageSize: this.pageSize,
           keyword: this.searchKeyword
         }
-        // [diag] 临时诊断日志：排查"订单列表为空"，下次能跑过就删
-        console.log('[list] loadOrders 入参:', params, 'storage.merchant_id=', uni.getStorageSync('merchant_id'))
         const res = await getOrders(params)
-        console.log('[list] loadOrders 返回: code=', res?.code, 'data 类型=', Array.isArray(res?.data) ? 'array' : typeof res?.data, 'len=', Array.isArray(res?.data) ? res.data.length : (res?.data?.list?.length || 0))
         const list = (Array.isArray(res.data) ? res.data : (res.data?.list || [])).map(o => {
           const style = getStatusStyle(o.status)
           return {

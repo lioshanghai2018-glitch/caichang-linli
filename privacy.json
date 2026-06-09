@@ -1,0 +1,30 @@
+{
+  "description": "本小程序仅在使用具体业务功能时收集必要信息，拒绝不影响使用",
+  "requiredPrivateInfos": ["chooseLocation"],
+  "collectItems": [
+    {
+      "purpose": "商家身份登录与认证",
+      "scene": "登录/商家认证",
+      "type": "账号信息",
+      "field": "phone/openid"
+    },
+    {
+      "purpose": "商品图片上传",
+      "scene": "添加/编辑商品",
+      "type": "相册/相机",
+      "field": "album/camera"
+    },
+    {
+      "purpose": "邻里内容审核",
+      "scene": "审核中心",
+      "type": "图片查看",
+      "field": "album"
+    },
+    {
+      "purpose": "订单配送联系",
+      "scene": "订单详情联系用户",
+      "type": "联系方式",
+      "field": "phoneNumber"
+    }
+  ]
+}

@@ -123,6 +123,7 @@
 
 <script>
 import { createProduct, updateProduct, getProductDetail, getCategories } from '@/utils/api.js'
+import { toHttpsUrl } from '@/utils/cloud-file.js'
 
 export default {
   data() {
@@ -236,7 +237,7 @@ export default {
     saveDraft() {
       uni.showToast({ title: '草稿已保存', icon: 'success' })
     },
-    submitProduct() {
+    async submitProduct() {
       if (this.submitting) return
       if (!this.productName) {
         uni.showToast({ title: '请输入商品名称', icon: 'none' })
@@ -246,6 +247,8 @@ export default {
         uni.showToast({ title: '请输入销售价', icon: 'none' })
         return
       }
+      // cloud:// fileID 转 https(image 组件要求 https://)
+      this.productImages = await toHttpsUrl(this.productImages)
       const cat = this.categories[this.categoryIndex] || {}
       const payload = {
         name: this.productName,
