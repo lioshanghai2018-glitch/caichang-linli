@@ -15,83 +15,27 @@
 	<view class="action-section">
 		<!-- #ifdef MP-WEIXIN -->
 		<button class="btn-wechat-primary" :loading="wechatLoading" @tap="handleWeixinLogin">
-			<view class="wechat-icon-wrap">
-				<image class="wechat-icon" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'><path d='M9.5 4C5.4 4 2 6.7 2 10.1c0 1.9 1 3.6 2.7 4.7L4 17.3l2.7-1.3c.7.2 1.5.3 2.3.4-.1-.4-.2-.9-.2-1.3 0-2.9 2.8-5.3 6.2-5.3.2 0 .5 0 .7.1C15 6.7 12.5 4 9.5 4zm-2 4c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1zm4 0c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1z'/><path d='M22 13.9c0-2.6-2.6-4.7-5.9-4.7s-5.9 2.1-5.9 4.7 2.6 4.7 5.9 4.7c.7 0 1.4-.1 2-.3l1.8 1-.4-1.7c1.5-.9 2.5-2.2 2.5-3.7zm-7.7-1.5c.5 0 .8.3.8.8s-.3.8-.8.8-.8-.3-.8-.8.3-.8.8-.8zm3.6 0c.5 0 .8.3.8.8s-.3.8-.8.8-.8-.3-.8-.8.3-.8.8-.8z'/></svg>" mode="aspectFit" />
-			</view>
 			<text class="btn-text">微信一键登录</text>
 		</button>
-
-		<text class="phone-login-link" @tap="toggleSmsMode">{{ showSmsMode ? '收起' : '手机号登录' }}</text>
-
-		<view class="divider-with-text">
-			<view class="divider-line"></view>
-			<text class="divider-text">或</text>
-			<view class="divider-line"></view>
-		</view>
-
-		<view v-if="showSmsMode" class="sms-form">
-			<view class="input-group">
-				<text class="label">手机号</text>
-				<view class="phone-row">
-					<input class="input" type="number" v-model="phone" placeholder="请输入手机号" maxlength="11" />
-					<view class="btn-sms" @tap="handleSendSms">
-						<text>{{ smsCountdown > 0 ? smsCountdown + 's' : '获取验证码' }}</text>
-					</view>
-				</view>
-			</view>
-			<view class="input-group">
-				<text class="label">验证码</text>
-				<input class="input" type="number" v-model="code" placeholder="请输入验证码" maxlength="6" />
-			</view>
-			<button class="btn-sms-login" :loading="loading" @tap="handleSmsLogin">验证码登录</button>
-		</view>
 		<!-- #endif -->
 
 		<!-- #ifdef H5 || APP-PLUS -->
 		<view class="h5-app-content">
-			<view class="tab-bar">
-				<view class="tab" :class="{active: mode === 'sms'}" @tap="mode = 'sms'">
-					<text>手机号登录</text>
-				</view>
-				<view class="tab" :class="{active: mode === 'test'}" @tap="mode = 'test'">
-					<text>测试模式</text>
-				</view>
+			<text class="test-hint">仅用于查看云端已有数据。开发期使用。</text>
+			<view class="input-group">
+				<text class="label">userId（可选）</text>
+				<input class="input" v-model="testUserId" placeholder="留空自动生成" />
 			</view>
+			<button class="btn-sms-login" :loading="testLoading" @tap="handleTestLogin">进入测试模式</button>
 
-			<block v-if="mode === 'sms'">
-				<view class="input-group">
-					<text class="label">手机号</text>
-					<input class="input" type="number" v-model="phone" placeholder="请输入手机号" maxlength="11" />
-				</view>
-				<view class="input-group">
-					<text class="label">验证码</text>
-					<view class="phone-row">
-						<input class="input" type="number" v-model="code" placeholder="请输入验证码" maxlength="6" />
-						<view class="btn-sms" @tap="handleSendSms">
-							<text>{{ smsCountdown > 0 ? smsCountdown + 's' : '获取验证码' }}</text>
-						</view>
-					</view>
-				</view>
-				<button class="btn-sms-login" :loading="loading" @tap="handleSmsLogin">登录</button>
-
-				<!-- #ifdef APP-PLUS -->
-				<view class="divider-with-text">
-					<view class="divider-line"></view>
-					<text class="divider-text">本机号码一键登录</text>
-					<view class="divider-line"></view>
-				</view>
-				<button class="btn-oneclick" :loading="oneClickLoading" @tap="handleOneClick">本机号码一键登录</button>
-				<!-- #endif -->
-			</block>
-
-			<block v-else>
-				<text class="test-hint">仅用于查看云端已有数据。开发期使用。</text>
-				<view class="input-group">
-					<text class="label">userId（可选）</text>
-					<input class="input" v-model="testUserId" placeholder="留空自动生成" />
-				</view>
-				<button class="btn-sms-login" :loading="testLoading" @tap="handleTestLogin">进入测试模式</button>
-			</block>
+			<!-- #ifdef APP-PLUS -->
+			<view class="divider-with-text">
+				<view class="divider-line"></view>
+				<text class="divider-text">本机号码一键登录</text>
+				<view class="divider-line"></view>
+			</view>
+			<button class="btn-oneclick" :loading="oneClickLoading" @tap="handleOneClick">本机号码一键登录</button>
+			<!-- #endif -->
 		</view>
 		<!-- #endif -->
 	</view>
@@ -108,77 +52,22 @@
 
 <script>
 // #ifdef H5 || APP-PLUS
-import { loginAsTest } from '@/utils/auth.js'
+import { loginAsTest, loginByUniverify } from '@/utils/auth.js'
 // #endif
-import { loginBySms, sendSmsCode, loginByUniverify, loginByWeixin } from '@/utils/auth.js'
+import { loginByWeixin } from '@/utils/auth.js'
 
 export default {
 	data() {
 		return {
-			mode: 'sms',
-			phone: '',
-			code: '',
-			loading: false,
 			wechatLoading: false,
 			// #ifdef H5 || APP-PLUS
 			testLoading: false,
 			testUserId: '',
-			// #endif
-			oneClickLoading: false,
-			smsCountdown: 0,
-			_smsTimer: null,
-			// #ifdef MP-WEIXIN
-			showSmsMode: false
+			oneClickLoading: false
 			// #endif
 		}
 	},
-	onUnload() {
-		if (this._smsTimer) clearInterval(this._smsTimer)
-	},
 	methods: {
-		// #ifdef MP-WEIXIN
-		toggleSmsMode() {
-			this.showSmsMode = !this.showSmsMode
-		},
-		// #endif
-		async handleSendSms() {
-			if (!this.phone || this.phone.length !== 11) {
-				return uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-			}
-			if (this.smsCountdown > 0) return
-			try {
-				await sendSmsCode(this.phone)
-				uni.showToast({ title: '已发送', icon: 'success' })
-				this.smsCountdown = 60
-				this._smsTimer = setInterval(() => {
-					this.smsCountdown--
-					if (this.smsCountdown <= 0 && this._smsTimer) {
-						clearInterval(this._smsTimer)
-						this._smsTimer = null
-					}
-				}, 1000)
-			} catch (e) {
-				uni.showToast({ title: e.msg || '发送失败', icon: 'none' })
-			}
-		},
-		async handleSmsLogin() {
-			if (!this.phone || this.phone.length !== 11) {
-				return uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-			}
-			if (!this.code || this.code.length < 4) {
-				return uni.showToast({ title: '请输入验证码', icon: 'none' })
-			}
-			this.loading = true
-			try {
-				await loginBySms(this.phone, this.code)
-				uni.showToast({ title: '登录成功', icon: 'success' })
-				setTimeout(() => uni.reLaunch({ url: '/pages/index/index' }), 800)
-			} catch (e) {
-				uni.showToast({ title: e.msg || '登录失败', icon: 'none' })
-			} finally {
-				this.loading = false
-			}
-		},
 		// #ifdef MP-WEIXIN
 		async handleWeixinLogin() {
 			this.wechatLoading = true
@@ -291,36 +180,11 @@ export default {
 	border: none;
 }
 
-.wechat-icon-wrap {
-	width: 44rpx;
-	height: 44rpx;
-	background-color: #FFFFFF;
-	border-radius: 50%;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	margin-right: 16rpx;
-}
-
-.wechat-icon {
-	width: 30rpx;
-	height: 30rpx;
-}
-
 .btn-text {
 	font-size: 32rpx;
 	color: #FFFFFF;
 	font-weight: 600;
 	letter-spacing: 2rpx;
-}
-
-/* 手机号登录链接 */
-.phone-login-link {
-	display: block;
-	text-align: center;
-	font-size: 28rpx;
-	color: #333333;
-	margin-top: 32rpx;
 }
 
 /* "或" 分隔线 */
@@ -342,11 +206,7 @@ export default {
 	margin: 0 24rpx;
 }
 
-/* ========== SMS 表单 ========== */
-.sms-form {
-	padding-top: 10rpx;
-}
-
+/* ========== SMS 表单（H5 块仍用 .input-group/.label/.input） ========== */
 .input-group {
 	margin-bottom: 24rpx;
 }
@@ -365,32 +225,6 @@ export default {
 	padding: 0 20rpx;
 	font-size: 28rpx;
 	background: #FAFAFA;
-}
-
-.phone-row {
-	display: flex;
-	gap: 12rpx;
-	align-items: center;
-}
-
-.phone-row .input {
-	flex: 1;
-}
-
-.btn-sms {
-	height: 80rpx;
-	padding: 0 20rpx;
-	background: #E8F5E9;
-	border-radius: 10rpx;
-	display: flex;
-	align-items: center;
-	flex-shrink: 0;
-}
-
-.btn-sms text {
-	font-size: 24rpx;
-	color: #2D5A27;
-	white-space: nowrap;
 }
 
 .btn-sms-login {
@@ -413,36 +247,6 @@ export default {
 /* ========== H5/APP 内容 ========== */
 .h5-app-content {
 	padding-top: 10rpx;
-}
-
-.tab-bar {
-	display: flex;
-	background: #F5F5F5;
-	border-radius: 12rpx;
-	padding: 6rpx;
-	margin-bottom: 36rpx;
-}
-
-.tab {
-	flex: 1;
-	padding: 16rpx 0;
-	text-align: center;
-	border-radius: 8rpx;
-}
-
-.tab text {
-	font-size: 26rpx;
-	color: #666;
-}
-
-.tab.active {
-	background: #fff;
-	box-shadow: 0 2rpx 6rpx rgba(0,0,0,0.05);
-}
-
-.tab.active text {
-	color: #2D5A27;
-	font-weight: 500;
 }
 
 .test-hint {
