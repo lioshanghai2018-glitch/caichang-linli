@@ -1,0 +1,13 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "postId": { "bsonType": "string", "title": "所属帖子" },
+    "userId": { "bsonType": "string", "title": "评论人" },
+    "authorName": { "bsonType": "string", "defaultValue": "" },
+    "content": { "bsonType": "string" },
+    "status": { "bsonType": "string", "defaultValue": "active", "description": "active / deleted" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}

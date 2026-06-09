@@ -1,0 +1,13 @@
+{
+  "bsonType": "object",
+  "required": ["_id"],
+  "properties": {
+    "_id": { "bsonType": "string" },
+    "name": { "bsonType": "string", "title": "分类名" },
+    "index": { "bsonType": "int", "title": "编号(1/2/3...)", "defaultValue": 0 },
+    "sort": { "bsonType": "int", "title": "排序", "defaultValue": 0 },
+    "status": { "bsonType": "string", "defaultValue": "active", "description": "active / deleted" },
+    "createdAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } },
+    "updatedAt": { "bsonType": "datetime", "forceDefaultValue": { "$env": "now" } }
+  }
+}
