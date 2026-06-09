@@ -37,7 +37,7 @@
 </template>
 
 <script>
-import { createConversation, getMessages, sendMessage } from '@/utils/order-api'
+import { createConversation, getMessages, sendMessage } from '@/utils/order-api.js'
 import { requireLogin, isLoggedIn, getMerchantId, getUserId } from '@/utils/auth.js'
 
 export default {

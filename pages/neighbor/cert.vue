@@ -255,7 +255,7 @@ export default {
 					|| billCloudUrl === this.billUrl
 					|| (!billCloudUrl.startsWith('cloud://') && !billCloudUrl.startsWith('http'))) {
 					uni.showToast({ title: '账单图未上传到云端，请重试', icon: 'none' })
-					return
+					throw new Error('账单图未上传到云端')
 				}
 
 				uni.showLoading({ title: '提交中...' })

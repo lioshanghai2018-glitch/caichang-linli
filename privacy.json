@@ -1,0 +1,36 @@
+{
+  "description": "本小程序仅在你使用具体业务功能时，收集以下必要信息，拒绝不影响浏览",
+  "requiredPrivateInfos": ["chooseLocation", "getLocation"],
+  "collectItems": [
+    {
+      "purpose": "订单配送与地址匹配",
+      "scene": "下单/地址管理",
+      "type": "位置信息",
+      "field": "userLocation"
+    },
+    {
+      "purpose": "联系商家/骑手/客服",
+      "scene": "订单联系/客服/邻里",
+      "type": "联系方式",
+      "field": "phoneNumber"
+    },
+    {
+      "purpose": "用户身份识别与登录",
+      "scene": "登录/注册/住户认证",
+      "type": "账号信息",
+      "field": "nickname/phone/openid"
+    },
+    {
+      "purpose": "邻里社区发帖与图片发布",
+      "scene": "邻里社区",
+      "type": "相册/相机",
+      "field": "album/camera"
+    },
+    {
+      "purpose": "订单通知",
+      "scene": "订单状态变化",
+      "type": "消息推送",
+      "field": "pushMessage"
+    }
+  ]
+}

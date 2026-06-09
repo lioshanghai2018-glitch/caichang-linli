@@ -149,6 +149,11 @@ export default {
         const res = await getPostDetail({ postId: this.postId, userId: this.userId })
         if (res.data) {
           const postData = Array.isArray(res.data) ? res.data[0] : res.data
+          if (postData && Array.isArray(postData.images)) {
+            postData.images = postData.images.filter(img =>
+              img && !String(img).startsWith('http://tmp/') && !String(img).startsWith('wxfile://')
+            )
+          }
           this.post = { ...this.post, ...postData }
         }
       } catch (e) {
