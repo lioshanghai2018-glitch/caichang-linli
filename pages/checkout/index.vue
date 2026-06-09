@@ -219,6 +219,7 @@ export default {
       }
     }
     this.selectedProducts = arr;
+    this.loadAddOnProducts();
   },
   onShow() {
     const raw = uni.getStorageSync("checkoutItems");
@@ -273,6 +274,43 @@ export default {
       });
     },
     toggleAddOn(index) { this.addOnProducts[index].checked = !this.addOnProducts[index].checked },
+    // 从云端拉团购特惠商品,同步到 addOnProducts(保持 name/spec/originalPrice/currentPrice/image/checked 字段)
+    async loadAddOnProducts() {
+      try {
+        const saleRes = await uni.request({
+          url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSale',
+          method: 'POST',
+          data: { method: 'getFlashSale', params: {} }
+        });
+        if (!saleRes.data || saleRes.data.code !== 0 || !saleRes.data.data) return;
+        const saleList = Array.isArray(saleRes.data.data) ? saleRes.data.data : [saleRes.data.data];
+        const now = Date.now();
+        const activeSale = saleList.find(s => s.status === true && s.startTime <= now && s.endTime > now)
+          || saleList.find(s => s.status === true && s.endTime > now)
+          || null;
+        if (!activeSale) return;
+
+        const productRes = await uni.request({
+          url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSaleProducts',
+          method: 'POST',
+          data: { method: 'getFlashSaleProducts', params: { flashSaleId: activeSale._id } }
+        });
+        if (!productRes.data || productRes.data.code !== 0) return;
+
+        const list = (productRes.data.data || []).map(item => ({
+          id: item._id,
+          name: item.name,
+          image: item.image || '/static/images/placeholder.png',
+          spec: (item.specs && item.specs[0] && item.specs[0].name) || '',
+          originalPrice: String(item.originalPrice || '').replace('¥', ''),
+          currentPrice: String(item.flashPrice || '').replace('¥', ''),
+          checked: false
+        }));
+        if (list.length > 0) this.addOnProducts = list;
+      } catch (e) {
+        console.warn('[checkout] 加载团购特惠失败,使用本地兜底:', e)
+      }
+    },
     showCoupon() {},
     showRemark() {
       uni.showModal({
