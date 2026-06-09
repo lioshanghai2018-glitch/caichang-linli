@@ -17,7 +17,7 @@
             <view class="author-name-row">
               <text class="author-name">{{ getDisplayId(post.authorId) }}</text>
               <view class="badge" v-if="post.isCertified || post.certified">
-                <text>已认证</text>
+                <text>邻居认证</text>
               </view>
             </view>
             <text class="post-time">{{ post.createdAt ? formatTime(post.createdAt) : post.time }}</text>

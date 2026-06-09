@@ -1,7 +1,8 @@
 // 邻里社区 API
 import { request } from './request.js'
+import { API_BASE, STORAGE_KEYS } from './config.js'
 
-// 分类配置
+// 分类配置(硬编码兜底,云端为空时使用;正常情况下从云端拉)
 export const CATEGORIES = [
   { index: 0, name: '全部', apiValue: '' },
   { index: 1, name: '邻里互助', apiValue: 1 },
@@ -10,6 +11,32 @@ export const CATEGORIES = [
   { index: 4, name: '相亲交友', apiValue: 4 },
   { index: 5, name: '二手闲置', apiValue: 5 }
 ]
+
+// 拉取云端分类(从商家后台管理),带本地缓存
+export function getNeighborCategories() {
+  return request('listNeighborCategories')
+}
+
+const CAT_STORAGE_KEY = 'neighbor_categories_cache'
+
+// 同步读缓存(没缓存返回 null,调用方自行兜底)
+export function loadCachedCategories() {
+  return uni.getStorageSync(CAT_STORAGE_KEY) || null
+}
+
+// 每次直接从云端拉(不再写入本地存储,避免商家后台新增后用户端看不到)
+// 返回值约定:
+//   - 成功(包含空列表)→ 返回数组(调用方直接用)
+//   - 失败 → 返回 null(调用方决定是否回退到缓存/兜底)
+export async function refreshCategories() {
+  try {
+    const res = await getNeighborCategories()
+    return (res.data && res.data.list) || []
+  } catch (e) {
+    console.warn('[neighbor-api] 拉分类失败:', e)
+    return null
+  }
+}
 
 // ==================== 帖子相关 ====================
 
@@ -50,9 +77,9 @@ export const getMyPosts = (params = {}) => {
 
 // ==================== 互动相关 ====================
 
-// 点赞/取消点赞（userId 忽略，由云端从 token 解析）
+// 点赞/取消点赞
 export const toggleLike = (postId, userId) => {
-  return request('toggleLike', { postId })
+  return request('toggleLike', { postId, userId })
 }
 
 // 关注/取消关注（userId 忽略，由云端从 token 解析）
@@ -67,9 +94,9 @@ export const getComments = (postId, page = 1, pageSize = 20) => {
   return request('getComments', { postId, page, pageSize })
 }
 
-// 发表评论（userId 忽略，由云端从 token 解析；authorName 仅作显示用）
+// 发表评论
 export const createComment = (postId, userId, content, authorName) => {
-  return request('createComment', { postId, content, authorName })
+  return request('createComment', { postId, userId, content, authorName })
 }
 
 // ==================== 认证相关 ====================
@@ -89,63 +116,30 @@ export const resetMyCert = (userId) => {
   return request('resetMyCert', { userId })
 }
 
-// 上传认证图片（参考商品图上传逻辑）
-// 优先走 uniCloud.uploadFile({ cloudPath, filePath }) 直传云存储 —— 与商品图一致
-// 失败时降级到 base64 + merchant-api.uploadImage（兼容未绑定 uniCloud-aliyun 的旧环境）
-// tempFilePath 是 chooseImage 返回的 wxfile://... 或 http://tmp/... 临时路径
-// 注意：uniCloud SDK 在不同版本下 fileID 可能是 cloud:// 也可能是 https:// 完整 URL。
-// 我们不再做 client 端反推（regex 容易把 storage domain 误识别成 file path），
-// 直接把 SDK 返回的 fileID 原样存进 DB。商家端 resolveFileIdsInItems 只处理 cloud://，
-// 对 https:// 直接当 URL 用（5 分钟内有效，超时后商家需重新触发解析）。
+// 上传认证图片。阿里云新版（mp- 前缀）服务空间下，uniCloud.uploadFile 返回的 fileID
+// 就是 https 永久 CDN URL（DCloud 文档原话："阿里云返回的 fileID 为链接形式可以直接使用"），
+// 直接用即可，存 DB 后商家端 <image> 标签可直接渲染，无需再走 getTempFileURL。
+// tempFilePath 是 chooseImage 返回的 wxfile://... 或 http://tmp/... 临时路径。
 export const uploadCertImage = (tempFilePath, cloudPath) => {
   return new Promise((resolve, reject) => {
-    console.log('[uploadCertImage] start, tempFilePath:', tempFilePath, 'cloudPath:', cloudPath)
-    // 优先尝试：uniCloud.uploadFile 直传（与商品图同链路，不走 JSON body，避开超时）
-    if (typeof uniCloud !== 'undefined' && uniCloud && typeof uniCloud.uploadFile === 'function') {
-      console.log('[uploadCertImage] uniCloud 存在，走直传')
-      uniCloud.uploadFile({
-        cloudPath,
-        filePath: tempFilePath,
-        success: (res) => {
-          console.log('[uploadCertImage] uniCloud success:', res)
-          if (res && res.fileID) {
-            // 原样返回，不做 https→cloud:// 转换（之前 toCloudFileID regex 会把
-            // "cloudstorage" 之类 storage domain 误识别为 file path，导致存的 cloud://
-            // 指向不存在的文件）
-            console.log('[uploadCertImage] fileID 原样存:', res.fileID)
-            resolve({ code: 0, data: { fileID: res.fileID } })
-          } else {
-            console.warn('[uploadCertImage] uniCloud 返回无 fileID，降级到 base64')
-            fallbackBase64(tempFilePath, cloudPath).then(resolve).catch(reject)
-          }
-        },
-        fail: (err) => {
-          console.warn('[uploadCertImage] uniCloud 直传失败，降级到 base64:', err)
-          fallbackBase64(tempFilePath, cloudPath).then(resolve).catch(reject)
-        }
-      })
+    if (typeof uniCloud === 'undefined' || !uniCloud || typeof uniCloud.uploadFile !== 'function') {
+      reject({ msg: 'uniCloud.uploadFile 不可用：未绑定 uniCloud-aliyun 或 SDK 未加载' })
       return
     }
-    // 无 uniCloud 全局对象（未绑定 uniCloud-aliyun），直接走 base64
-    console.log('[uploadCertImage] uniCloud 不可用，直接走 base64 降级')
-    fallbackBase64(tempFilePath, cloudPath).then(resolve).catch(reject)
-  })
-}
-
-// 降级方案：base64 + merchant-api.uploadImage（用户端未绑定 uniCloud 时使用）
-function fallbackBase64(tempFilePath, cloudPath) {
-  return new Promise((resolve, reject) => {
-    try {
-      console.log('[uploadCertImage] fallbackBase64 读取文件:', tempFilePath)
-      const fs = uni.getFileSystemManager()
-      const base64 = fs.readFileSync(tempFilePath, 'base64')
-      console.log('[uploadCertImage] base64 长度:', base64.length)
-      const dataUri = `data:image/jpeg;base64,${base64}`
-      request('uploadImage', { fileData: dataUri, cloudPath }).then(resolve).catch(reject)
-    } catch (e) {
-      console.error('[uploadCertImage] fallbackBase64 失败:', e)
-      reject({ msg: '图片读取失败：' + (e.message || e.errMsg || '未知错误') })
-    }
+    uniCloud.uploadFile({
+      cloudPath,
+      filePath: tempFilePath,
+      success: (res) => {
+        if (res && res.fileID) {
+          resolve({ code: 0, data: { fileID: res.fileID } })
+        } else {
+          reject({ msg: 'uniCloud.uploadFile 返回成功但无 fileID，响应: ' + JSON.stringify(res) })
+        }
+      },
+      fail: (err) => {
+        reject({ msg: 'uniCloud.uploadFile 失败：' + (err.errMsg || err.message || JSON.stringify(err)) })
+      }
+    })
   })
 }
 

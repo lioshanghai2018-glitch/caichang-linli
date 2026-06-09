@@ -13,14 +13,14 @@
 
 		<!-- 状态Tab -->
 		<view class="status-tab">
-			<view class="status-item" :class="{ active: currentStatus === '' }" @tap="switchStatus('')">
+			<view class="status-item" :class="{ active: currentStatus === 'all' }" @tap="switchStatus('all')">
 				<text>全部</text>
 			</view>
-			<view class="status-item" :class="{ active: currentStatus === 1 }" @tap="switchStatus(1)">
-				<text>上架</text>
+			<view class="status-item" :class="{ active: currentStatus === 'active' }" @tap="switchStatus('active')">
+				<text>显示</text>
 			</view>
-			<view class="status-item" :class="{ active: currentStatus === 0 }" @tap="switchStatus(0)">
-				<text>下架</text>
+			<view class="status-item" :class="{ active: currentStatus === 'closed' }" @tap="switchStatus('closed')">
+				<text>隐藏</text>
 			</view>
 		</view>
 
@@ -36,13 +36,25 @@
 			<!-- 帖子卡片 -->
 			<view class="post-card" v-for="post in posts" :key="post._id || post.id">
 				<view class="card-header">
-					<view class="status-tag" :class="post.status === 1 ? 'online' : 'offline'">
-						<text>{{ post.status === 1 ? '上架' : '下架' }}</text>
+					<view class="status-tag" :class="isDisplayed(post) ? 'online' : 'offline'">
+						<text>{{ isDisplayed(post) ? '显示' : '隐藏' }}</text>
 					</view>
 					<text class="card-title">{{ post.title }}</text>
 				</view>
 
 				<text class="card-content">{{ post.content }}</text>
+
+				<!-- 图片缩略图(过滤掉 http://tmp/ 临时路径) -->
+				<view class="card-images" v-if="validImages(post.images).length > 0">
+					<image
+						class="card-image-thumb"
+						v-for="(img, iIdx) in validImages(post.images).slice(0, 6)"
+						:key="iIdx"
+						:src="img"
+						mode="aspectFill"
+						@tap.stop="previewImage(validImages(post.images), iIdx)"
+					/>
+				</view>
 
 				<!-- 商家下架原因 -->
 				<view class="block-reason" v-if="post.blockedByAdmin">
@@ -62,14 +74,14 @@
 					<view class="action-btn" @tap="goEditPost(post)">
 						<text>编辑</text>
 					</view>
-					<view class="action-btn" v-if="post.status === 1" @tap="toggleOffline(post)">
-						<text>下架</text>
+					<view class="action-btn" v-if="isDisplayed(post)" @tap="hidePost(post)">
+						<text>隐藏</text>
 					</view>
-					<view class="action-btn" v-else-if="!post.blockedByAdmin" @tap="toggleOnline(post)">
-						<text>上架</text>
+					<view class="action-btn" v-else-if="!post.blockedByAdmin" @tap="showPost(post)">
+						<text>显示</text>
 					</view>
 					<view class="action-btn disabled" v-else>
-						<text>上架</text>
+						<text>显示</text>
 					</view>
 					<view class="action-btn delete" @tap="confirmDelete(post)">
 						<text>删除</text>
@@ -87,12 +99,13 @@
 
 <script>
 import { getMyPosts, togglePostStatus, deletePost } from '@/utils/neighbor-api.js'
+import { getUserId } from '@/utils/auth.js'
 
 export default {
 	data() {
 		return {
-			userId: 'user_default', // 临时值，等待 onLoad 初始化
-			currentStatus: '',
+			userId: '', // 从 storage 读取真实登录用户 ID
+			currentStatus: 'all',
 			posts: [],
 			loading: false,
 			refreshing: false,
@@ -100,17 +113,21 @@ export default {
 		}
 	},
 	onLoad() {
-		// 确保有 userId
-		if (!uni.getStorageSync('userId')) {
-			const newUserId = 'user_' + Date.now()
-			uni.setStorageSync('userId', newUserId.replace('user_', ''))
+		this.userId = getUserId()
+		if (!this.userId) {
+			uni.showToast({ title: '请先登录', icon: 'none' })
+			setTimeout(() => uni.navigateBack(), 1000)
+			return
 		}
-		this.userId = uni.getStorageSync('userId') || 'user_default'
 		this.loadMyPosts()
 	},
 	methods: {
 		goBack() {
 			uni.navigateBack()
+		},
+		isDisplayed(post) {
+			const s = post.status
+			return s === 1 || s === '1' || s === true || s === 'active' || s === 'online'
 		},
 		async loadMyPosts() {
 			if (this.loading) return
@@ -118,7 +135,7 @@ export default {
 
 			try {
 				const params = { userId: this.userId }
-				if (this.currentStatus !== '') {
+				if (this.currentStatus === 'active' || this.currentStatus === 'closed') {
 					params.status = this.currentStatus
 				}
 				const res = await getMyPosts(params)
@@ -126,8 +143,10 @@ export default {
 			} catch (e) {
 				// 使用本地存储
 				let allPosts = uni.getStorageSync('local_posts') || []
-				if (this.currentStatus !== '') {
-					allPosts = allPosts.filter(p => p.status == this.currentStatus)
+				if (this.currentStatus === 'active') {
+					allPosts = allPosts.filter(p => p.status == 1 || p.status === 'active' || p.status === 'online')
+				} else if (this.currentStatus === 'closed') {
+					allPosts = allPosts.filter(p => p.status == 0 || p.status === 'closed' || p.status === 'offline')
 				}
 				this.posts = allPosts
 			}
@@ -153,10 +172,10 @@ export default {
 			const id = post._id || post.id
 			uni.navigateTo({ url: `/pages/neighbor/publish?edit=${id}` })
 		},
-		async toggleOffline(post) {
+		async hidePost(post) {
 			const id = post._id || post.id
 			uni.showModal({
-				title: '确认下架',
+				title: '确认隐藏',
 				content: '确定要下架该帖子吗？',
 				success: async (res) => {
 					if (res.confirm) {
@@ -166,27 +185,27 @@ export default {
 							// 本地存储
 							let localPosts = uni.getStorageSync('local_posts') || []
 							const idx = localPosts.findIndex(p => (p._id || p.id) === id)
-							if (idx >= 0) localPosts[idx].status = 0
+							if (idx >= 0) localPosts[idx].status = 'closed'
 							uni.setStorageSync('local_posts', localPosts)
 						}
-						post.status = 0
-						uni.showToast({ title: '已下架', icon: 'success' })
+						post.status = 'closed'
+						uni.showToast({ title: '已隐藏', icon: 'success' })
 					}
 				}
 			})
 		},
-		async toggleOnline(post) {
+		async showPost(post) {
 			const id = post._id || post.id
 			try {
 				await togglePostStatus(id, 1)
 			} catch (e) {
 				let localPosts = uni.getStorageSync('local_posts') || []
 				const idx = localPosts.findIndex(p => (p._id || p.id) === id)
-				if (idx >= 0) localPosts[idx].status = 1
+				if (idx >= 0) localPosts[idx].status = 'active'
 				uni.setStorageSync('local_posts', localPosts)
 			}
-			post.status = 1
-			uni.showToast({ title: '已上架', icon: 'success' })
+			post.status = 'active'
+			uni.showToast({ title: '已显示', icon: 'success' })
 		},
 		confirmDelete(post) {
 			const id = post._id || post.id
@@ -208,6 +227,14 @@ export default {
 					}
 				}
 			})
+		},
+		previewImage(images, idx) {
+			uni.previewImage({ urls: images.slice(0, 6), current: idx })
+		},
+		// 过滤掉 http://tmp/ 临时路径(旧帖发布时存的临时文件,几小时就过期,现在已不可用)
+		validImages(images) {
+			if (!images || !Array.isArray(images)) return []
+			return images.filter(img => img && !String(img).startsWith('http://tmp/'))
 		},
 		formatTime(isoString) {
 			if (!isoString) return ''
@@ -393,6 +420,20 @@ export default {
 	-webkit-line-clamp: 2;
 	-webkit-box-orient: vertical;
 	overflow: hidden;
+}
+
+.card-images {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8rpx;
+	margin-top: 12rpx;
+}
+
+.card-image-thumb {
+	width: 120rpx;
+	height: 120rpx;
+	border-radius: 6rpx;
+	background-color: #F5F5F5;
 }
 
 .block-reason {

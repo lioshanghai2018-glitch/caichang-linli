@@ -27,14 +27,6 @@
 				</view>
 				<view class="form-divider"></view>
 
-				<!-- 标题 -->
-				<view class="form-item">
-					<view class="form-label">标题</view>
-					<input class="form-input" v-model="form.title" placeholder="输入帖子标题（必填）"
-						placeholder-class="input-placeholder" maxlength="50" />
-				</view>
-				<view class="form-divider"></view>
-
 				<!-- 正文 -->
 				<view class="form-item content-item">
 					<view class="form-label">正文</view>
@@ -46,7 +38,7 @@
 
 			<!-- 图片上传 -->
 			<view class="form-section">
-				<view class="section-title">图片（最多9张）</view>
+				<view class="section-title">图片（最多6张）</view>
 				<view class="image-list">
 					<view class="image-item" v-for="(img, idx) in form.images" :key="idx">
 						<image :src="img" mode="aspectFill" />
@@ -54,48 +46,31 @@
 							<text>×</text>
 						</view>
 					</view>
-					<view class="image-add" v-if="form.images.length < 9" @tap="chooseImage">
+					<view class="image-add" v-if="form.images.length < 6" @tap="chooseImage">
 						<view class="icon-add">+</view>
 						<text class="add-text">添加图片</text>
 					</view>
 				</view>
 			</view>
 
-			<!-- 联系方式 -->
-			<view class="form-section">
-				<view class="form-item">
-					<view class="form-label">手机号</view>
-					<input class="form-input" type="number" v-model="form.contactPhone"
-						placeholder="方便联系（选填）" placeholder-class="input-placeholder" maxlength="11" />
-				</view>
-				<view class="form-divider"></view>
-
-				<!-- 价格 -->
-				<view class="form-item">
-					<view class="form-label">价格</view>
-					<input class="form-input" v-model="form.price" placeholder="如 ¥80起（选填）"
-						placeholder-class="input-placeholder" />
-				</view>
-			</view>
-		</scroll-view>
+	</scroll-view>
 	</view>
 </template>
 
 <script>
-import { createPost, updatePost, getPostDetail, CATEGORIES } from '@/utils/neighbor-api.js'
-import { requireLogin } from '@/utils/auth.js'
+import { createPost, updatePost, getPostDetail, loadCachedCategories, refreshCategories } from '@/utils/neighbor-api.js'
+import { requireLogin, getUserId } from '@/utils/auth.js'
 
 export default {
 	data() {
 		return {
 			isEdit: false,
 			postId: '',
-			categories: CATEGORIES.slice(1), // 去掉"全部"
+			categories: [],
 			submitting: false,
 			form: {
 				categoryIndex: null,
 				categoryName: '',
-				title: '',
 				content: '',
 				images: [],
 				contactPhone: '',
@@ -133,8 +108,34 @@ export default {
 			this.postId = options.edit
 			this.loadPostData()
 		}
+
+		// 加载分类列表(从云端拉,缓存或兜底)
+		this.loadCategories()
 	},
 	methods: {
+		async loadCategories() {
+			// 始终从云端拉(分类是 6 条小数据,缓存只会导致后台新增/删除后用户端看不到)
+			const result = await refreshCategories()
+			if (result === null) {
+				// 云端调用失败 → 回退到本地缓存,再不行用兜底
+				const cached = loadCachedCategories()
+				if (cached && cached.length > 0) {
+					this.categories = cached
+				} else {
+					this.categories = [
+						{ index: 1, name: '邻里互助' },
+						{ index: 2, name: '手艺服务' },
+						{ index: 3, name: '相约同行' },
+						{ index: 4, name: '相亲交友' },
+						{ index: 5, name: '二手闲置' }
+					]
+				}
+				uni.showToast({ title: '分类同步失败,使用本地', icon: 'none' })
+			} else {
+				// 云端返回(含空数组) → 直接用,保证后台新增/删除能实时生效
+				this.categories = result
+			}
+		},
 		goBack() {
 			uni.navigateBack()
 		},
@@ -149,7 +150,7 @@ export default {
 			})
 		},
 		chooseImage() {
-			const count = 9 - this.form.images.length
+			const count = 6 - this.form.images.length
 			uni.chooseImage({
 				count,
 				sizeType: ['compressed'],
@@ -165,10 +166,6 @@ export default {
 		validateForm() {
 			if (this.form.categoryIndex === null) {
 				uni.showToast({ title: '请选择分类', icon: 'none' })
-				return false
-			}
-			if (!this.form.title.trim()) {
-				uni.showToast({ title: '请输入标题', icon: 'none' })
 				return false
 			}
 			if (!this.form.content.trim()) {
@@ -188,17 +185,34 @@ export default {
 			this.submitting = true
 			uni.showLoading({ title: '发布中...' })
 
+			// 图片:把临时路径 http://tmp/... 上传到云存储,得到永久 fileID 后再提交
+			const uploadedImages = []
+			for (let i = 0; i < this.form.images.length; i++) {
+				const img = this.form.images[i]
+				if (!img) continue
+				if (img.startsWith('https://') || img.startsWith('cloud://') || img.startsWith('mp-')) {
+					uploadedImages.push(img)
+					continue
+				}
+				try {
+					const cloudPath = 'post_images/' + Date.now() + '_' + i + '.jpg'
+					const fileID = await this.uploadToCloud(img, cloudPath)
+					uploadedImages.push(fileID)
+				} catch (e) {
+					console.warn('[publish] 图片上传失败,跳过:', img, e)
+				}
+			}
+
 			const postData = {
 				_id: 'post_' + Date.now(),
-				categoryIndex: this.form.categoryIndex + 1,
+				categoryIndex: (this.categories[this.form.categoryIndex] && this.categories[this.form.categoryIndex].index) || (this.form.categoryIndex + 1),
 				categoryName: this.form.categoryName,
-				title: this.form.title.trim(),
 				content: this.form.content.trim(),
-				images: this.form.images,
+				images: uploadedImages,
 				contactPhone: this.form.contactPhone,
 				price: this.form.price,
 				authorName: uni.getStorageSync('userName') || '邻居',
-				// authorId 不再从本地 storage 读取，**由云端从 token 解析**
+				userId: getUserId(),
 				likes: 0,
 				comments: 0,
 				status: 1,
@@ -235,6 +249,23 @@ export default {
 			}, 1000)
 			this.submitting = false
 		},
+		uploadToCloud(filePath, cloudPath) {
+			return new Promise((resolve, reject) => {
+				if (typeof uniCloud === 'undefined' || !uniCloud || typeof uniCloud.uploadFile !== 'function') {
+					reject(new Error('uniCloud.uploadFile 不可用'))
+					return
+				}
+				uniCloud.uploadFile({
+					cloudPath,
+					filePath,
+					success: (res) => {
+						if (res && res.fileID) resolve(res.fileID)
+						else reject(new Error('上传返回无 fileID'))
+					},
+					fail: (err) => reject(err)
+				})
+			})
+		},
 		async loadPostData() {
 			try {
 				const res = await getPostDetail({ postId: this.postId })
@@ -244,7 +275,6 @@ export default {
 				this.form = {
 					categoryIndex: catIdx >= 0 ? catIdx : null,
 					categoryName: data.categoryName || '',
-					title: data.title || '',
 					content: data.content || '',
 					images: data.images || [],
 					contactPhone: data.contactPhone || '',
