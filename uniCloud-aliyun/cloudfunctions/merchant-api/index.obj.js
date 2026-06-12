@@ -505,7 +505,15 @@ module.exports = {
     } else {
       console.log('[updateOrderStatus] 无库存变动（已扣过 / 非相关状态切换）')
     }
-    const updateData = { status, updatedAt: new Date(), ...extraData, ...stockDelta }
+    const updateData = {
+      status,
+      updatedAt: new Date(),
+      // 标记完成时间,用于按"完成时间"统计今日/本周/本月订单与销售额
+      // 缺这字段时,getDashboard 会用 updatedAt 兜底,但其他状态变化也会改 updatedAt(噪音)
+      ...(status === 'completed' && !extraData.completedAt && { completedAt: new Date() }),
+      ...extraData,
+      ...stockDelta
+    }
     const result = await db.collection('orders').where(where).update(updateData)
 
     if (result.updated > 0) {
@@ -967,6 +975,87 @@ module.exports = {
 
   // ==================== 分类管理 ====================
 
+  async getBanners(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { status, position } = params
+    let query = {}
+    if (status !== undefined) query.status = status
+    if (position) query.position = position
+    const res = await db.collection('banners').where(query).orderBy('sort', 'asc').orderBy('createdAt', 'desc').get()
+    return { code: 0, data: res.data || [] }
+  },
+
+  async addBanner(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { image, link, sort, position } = params
+    if (!image) return { code: -1, msg: '璇蜂笂浼犺疆鎾浘鍥剧墖' }
+    const banner = {
+      image,
+      link: link || '',
+      sort: sort || 0,
+      position: position || 'home',
+      status: 1,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+    const res = await db.collection('banners').add(banner)
+    return { code: 0, data: { id: res.id }, msg: '娣诲姞鎴愬姛' }
+  },
+
+  async updateBanner(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id, image, link, sort, position, status } = params
+    if (!id) return { code: -1, msg: 'id蹇呭～' }
+    const updateData = { updatedAt: new Date() }
+    if (image !== undefined) updateData.image = image
+    if (link !== undefined) updateData.link = link
+    if (sort !== undefined) updateData.sort = sort
+    if (position !== undefined) updateData.position = position
+    if (status !== undefined) updateData.status = status
+    await db.collection('banners').doc(id).update(updateData)
+    return { code: 0, msg: '鏇存柊鎴愬姛' }
+  },
+
+  async deleteBanner(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    if (!id) return { code: -1, msg: 'id蹇呭～' }
+    await db.collection('banners').doc(id).remove()
+    return { code: 0, msg: '鍒犻櫎鎴愬姛' }
+  },
+  async syncCart({ userId, items }) {
+    if (!userId) return { code: -1, msg: 'missing userId' }
+    if (!Array.isArray(items)) return { code: -1, msg: 'items must be array' }
+    const existing = await db.collection('carts').where({ userId }).get()
+    if (existing.data && existing.data.length > 0) {
+      await db.collection('carts').doc(existing.data[0]._id).update({ items, updatedAt: new Date() })
+    } else {
+      await db.collection('carts').add({ userId, items, createdAt: new Date(), updatedAt: new Date() })
+    }
+    return { code: 0, data: { msg: 'synced' } }
+  },
+
+  async getCart({ userId }) {
+    if (!userId) return { code: -1, msg: 'missing userId' }
+    const res = await db.collection('carts').where({ userId }).get()
+    if (res.data && res.data.length > 0) {
+      return { code: 0, data: { items: res.data[0].items || [] } }
+    }
+    return { code: 0, data: { items: [] } }
+  },
+
+  async clearCart({ userId }) {
+    if (!userId) return { code: -1, msg: 'missing userId' }
+    const existing = await db.collection('carts').where({ userId }).get()
+    if (existing.data && existing.data.length > 0) {
+      await db.collection('carts').doc(existing.data[0]._id).remove()
+    }
+    return { code: 0, data: { msg: 'cleared' } }
+  },
   async getCategories(params) {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
@@ -1125,18 +1214,32 @@ module.exports = {
   async applyRefund(params) {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
-    const { id, orderNo, reason } = params
-    // 兼容 _id 和 orderNo 两种入参（jql 的 where _id 要求 ObjectId 类型，传字符串不匹配）
+    const { id, orderNo, reason, type, images, userId } = params
+    // 图片必填防御：与用户端提交校验双保险
+    if (!Array.isArray(images) || images.length === 0) {
+      return { code: -1, msg: '请上传至少1张图片' }
+    }
+    // 先查订单拿到 _id,后续 listRefunds / processRefund 都按 _id 关联
+    // (用户端传的是 orderNo 字符串,直接存进 orderId 字段会导致 listRefunds 查不到)
     const where = orderNo ? { orderNo } : { _id: id }
-    await db.collection('orders').where(where).update({
+    const orderRes = await db.collection('orders').where(where).limit(1).get()
+    const order = orderRes.data && orderRes.data[0]
+    if (!order) return { code: -1, msg: '订单不存在' }
+    await db.collection('orders').doc(order._id).update({
       status: 'refunding',
       refundReason: reason,
+      refundType: type || 'return_refund',
       updatedAt: new Date()
     })
     await db.collection('refunds').add({
-      orderId: id || orderNo,
-      orderNo: orderNo,
+      orderId: order._id,
+      orderNo: order.orderNo,
+      refundAmount: order.payAmount || order.totalAmount || 0,
       reason,
+      // 新增字段:退款类型 / 图片凭证 / 申请人
+      type: type || 'return_refund',
+      images: images,
+      userId: userId || null,
       status: 'pending',
       createdAt: new Date()
     })
@@ -1146,19 +1249,153 @@ module.exports = {
   async processRefund(params) {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
-    const { id, refundAmount, action } = params
-    const status = action === 'approve' ? 'refunded' : 'paid'
-    await db.collection('orders').doc(id).update({
-      status,
-      refundAmount,
-      updatedAt: new Date()
-    })
-    await db.collection('refunds').where({ orderId: id }).update({
+    const { id, refundAmount, action, rejectReason } = params
+    // 查 refund:id 可能是订单 _id(新数据)或 orderNo 字符串(老数据),两边都查一次
+    let refundRes = await db.collection('refunds').where({ orderId: id }).limit(1).get()
+    if (!refundRes.data || !refundRes.data.length) {
+      refundRes = await db.collection('refunds').where({ orderNo: id }).limit(1).get()
+    }
+    const refund = refundRes.data && refundRes.data[0]
+    if (!refund) return { code: -1, msg: '退款记录不存在' }
+    // 拿订单 _id:refund.orderId 可能是 _id 也可能是 orderNo,统一反查一遍
+    let orderDocId = refund.orderId
+    const looksLikeObjectId = /^[a-f0-9]{24}$/i.test(orderDocId || '')
+    if (!looksLikeObjectId) {
+      const searchNo = refund.orderNo || orderDocId
+      if (searchNo) {
+        const orderRes = await db.collection('orders').where({ orderNo: searchNo }).limit(1).get()
+        const order = orderRes.data && orderRes.data[0]
+        if (order) {
+          orderDocId = order._id
+          if (!refundAmount && order.payAmount) {
+            refundAmount = order.payAmount
+          }
+        }
+      }
+    }
+    if (!orderDocId) return { code: -1, msg: '订单不存在' }
+    // 换货('exchange')不修改订单状态(不退款),其他类型才走 refunded/paid
+    const isExchange = refund.type === 'exchange'
+    if (!isExchange) {
+      if (action === 'reject') {
+        // 拒绝退款：保持订单原 status(refunding=历史订单)，额外写入退款拒绝状态与原因
+        await db.collection('orders').doc(orderDocId).update({
+          refundStatus: 'rejected',
+          refundAmount,
+          rejectReason: rejectReason || '不符合退款条件',
+          updatedAt: new Date()
+        })
+      } else {
+        await db.collection('orders').doc(orderDocId).update({
+          status: 'refunded',
+          refundAmount,
+          updatedAt: new Date()
+        })
+      }
+    }
+    // 退款记录自身用 _id 准确定位(避免 orderId 模糊匹配多条)
+    await db.collection('refunds').doc(refund._id).update({
       status: action === 'approve' ? 'approved' : 'rejected',
-      refundAmount,
+      refundAmount: isExchange ? (refundAmount || 0) : refundAmount,
+      rejectReason: action === 'reject' ? (rejectReason || '不符合退款条件') : (refund.rejectReason || ''),
       processedAt: new Date()
     })
     return { code: 0, data: { success: true } }
+  },
+
+  // 商家公开信息(用户端拿电话用,只暴露 name+phone 不泄露敏感字段)
+  async getMerchantPublicInfo(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const merchantId = params.merchantId
+    if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
+    // 商家回退:同 getDashboard 的"全集合唯一商家"模式
+    let targetId = merchantId
+    let m = await db.collection('merchants').doc(merchantId).field({ name: true, phone: true }).get()
+    if (!m.data || !m.data.length) {
+      const all = await db.collection('merchants').limit(2).get()
+      if (all.data && all.data.length === 1) {
+        targetId = all.data[0]._id
+        m = await db.collection('merchants').doc(targetId).field({ name: true, phone: true }).get()
+      } else {
+        return { code: -1, msg: '商家不存在' }
+      }
+    }
+    return { code: 0, data: m.data && m.data[0] ? m.data[0] : null }
+  },
+
+  // 商家端退款审核列表:按 merchantId 隔离 + 状态过滤 + join 订单/用户
+  async listRefunds(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const merchantId = params.merchantId
+    const status = params.status || 'all'
+    if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
+    // 商家回退
+    let targetId = merchantId
+    const m = await db.collection('merchants').doc(merchantId).get()
+    if (!m.data || !m.data.length) {
+      const all = await db.collection('merchants').limit(2).get()
+      if (all.data && all.data.length === 1) targetId = all.data[0]._id
+      else return { code: 0, data: [] }
+    }
+    // 查该商家所有订单的 _id 和 orderNo(用于反查退款)
+    // 老 applyRefund 写入 refunds.orderId 存的是 orderNo 字符串(不是 _id),
+    // 新版才存订单 _id。这里双路查询,新老数据都能匹配
+    const ordersRes = await db.collection('orders').where({ merchantId: targetId }).field({ _id: true, orderNo: true, totalAmount: true, payAmount: true, items: true, status: true }).limit(2000).get()
+    const orders = (ordersRes.data || [])
+    const orderIds = orders.map(o => o._id).filter(Boolean)
+    const orderNos = orders.map(o => o.orderNo).filter(Boolean)
+    if (orderIds.length === 0 && orderNos.length === 0) return { code: 0, data: [] }
+    // 拼退款查询:orderId(新数据) 或 orderNo(老数据)
+    const conditions = []
+    if (orderIds.length > 0) conditions.push({ orderId: dbCmd.in(orderIds) })
+    if (orderNos.length > 0) conditions.push({ orderNo: dbCmd.in(orderNos) })
+    let where = conditions.length > 1 ? dbCmd.or(conditions) : conditions[0]
+    if (status !== 'all') {
+      where = dbCmd.and([where, { status }])
+    }
+    const refundsRes = await db.collection('refunds').where(where).orderBy('createdAt', 'desc').limit(100).get()
+    if (!refundsRes.data || refundsRes.data.length === 0) return { code: 0, data: [] }
+    // join 订单(拿 totalAmount):同时按 _id 和 orderNo 索引,兼容老数据用 orderNo 当 orderId
+    const orderMap = {}
+    for (const o of orders) {
+      if (o._id) orderMap[o._id] = o
+      if (o.orderNo) orderMap[o.orderNo] = o
+    }
+    // join 用户(拿昵称/手机/头像)
+    const userIds = [...new Set(refundsRes.data.map(r => r.userId).filter(Boolean))]
+    const userMap = {}
+    if (userIds.length > 0) {
+      const usersRes = await db.collection('users').where({ _id: dbCmd.in(userIds) }).field({ nickname: true, phone: true, avatar: true }).get()
+      for (const u of (usersRes.data || [])) userMap[u._id] = u
+    }
+    // 图片 fileID → 永久 https URL(uniCloud mp- 空间 fileID 须走此转换,小程序 image 组件直接吃 cloud:// 会失败)
+    const allFileIds = []
+    for (const r of refundsRes.data) {
+      if (Array.isArray(r.images)) allFileIds.push(...r.images)
+    }
+    let fileIdMap = {}
+    if (allFileIds.length > 0) {
+      try {
+        const tempRes = await uniCloud.getTempFileURL({ fileList: allFileIds })
+        for (const f of (tempRes.fileList || [])) {
+          if (f.fileID && f.tempFileURL) fileIdMap[f.fileID] = f.tempFileURL
+        }
+      } catch (e) {
+        console.warn('[listRefunds] getTempFileURL failed:', e)
+      }
+    }
+    const data = refundsRes.data.map(r => {
+      const images = Array.isArray(r.images) ? r.images.map(fid => fileIdMap[fid] || fid) : []
+      return {
+        ...r,
+        images,
+        order: orderMap[r.orderId] || null,
+        user: r.userId ? (userMap[r.userId] || null) : null
+      }
+    })
+    return { code: 0, data }
   },
 
   async deleteOrder(params) {
@@ -1405,33 +1642,69 @@ module.exports = {
   async getDashboard(params) {
     // 统一从 this.event 拿真实入参（URL 化下解构签名不可靠，_before 已挂到 this.event）
     const _p = (params && Object.keys(params).length) ? params : (this.event || {})
-    const merchantId = _p.merchantId
+    let merchantId = _p.merchantId
     const timeFilter = _p.timeFilter || 'today'
     const customDate = _p.customDate || ''
     if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
+
+    // 商家回退:与 getProducts 一致(行 706-718)。存储里的 merchantId 在 merchants 表里查不到时(uni-id 登录
+    // 返回的 uid 与 fixProductsMerchantId 回填的真实 ID 不一致),改用唯一商家,避免静默返回 0。
+    {
+      const m = await db.collection('merchants').doc(merchantId).get()
+      if (!m.data || !m.data.length) {
+        const all = await db.collection('merchants').limit(2).get()
+        if (all.data && all.data.length === 1) {
+          merchantId = all.data[0]._id
+        }
+      }
+    }
 
     const range = computeTimeRange(timeFilter, customDate)
     const startMs = range.start.getTime()
     const endMs = range.end.getTime()
 
-    // 一次拉完该商家全部订单（limit 2000，业务量级够用；超量改分页聚合）
-    const all = await db.collection('orders').where({ merchantId }).limit(2000).get()
-    const list = (all.data || []).filter(o => o.createdAt)
+    // 一次拉完该商家全部订单。limit 10000 处理大单量场景;按 _id 默认排序,不能保证覆盖时间窗口
+    // 内的所有单子,所以时间窗口内的统计走下面的 DB 级 createdAt 过滤单独查
+    // merchantId 兜底:storage 里的 ID 与实际订单的 ID 不一致(老登录残留 / fixOrders 漏跑),先按 merchantId 查,
+    // 若返回 0 单再降级去掉 merchantId(单商家场景);保证至少能拿到数据
+    let all = await db.collection('orders').where({ merchantId }).limit(10000).get()
+    let list = (all.data || []).filter(o => o.createdAt)
+    if (list.length === 0) {
+      const fallback = await db.collection('orders').limit(10000).get()
+      list = (fallback.data || []).filter(o => o.createdAt)
+      console.warn('[getDashboard] orders 按 merchantId 查为空,降级全集合,共:', list.length)
+    }
 
-    // 4 卡片：时间范围内所有订单
+    // 4 卡片:核心语义改为"时间窗口内完成的订单"。
+    // 旧版按 createdAt 在窗口内:商家昨天创建今天确认完成的订单会被漏算,实测少了 1 单。
+    // 优先用 completedAt(精准),缺省兜底用 updatedAt(老数据未补写 completedAt)。
+    // 这里在内存里按 status='completed' + 完成时间过滤,比 DB 级 dbCmd.and 更可靠(uniCloud 某些版本
+    // 对 OR/AND 复合条件支持不完整,内存过滤无此隐患)。
     const inRange = list.filter(o => {
+      if (normalizeOrderStatus(o.status) !== 'completed') return false
+      const t = o.completedAt ? new Date(o.completedAt).getTime()
+            : o.updatedAt  ? new Date(o.updatedAt).getTime() : 0
+      return t >= startMs && t <= endMs
+    })
+    // 旧版口径(按 createdAt 在窗口内的全部订单)保留,仅做诊断日志用,不下发
+    const legacyInRange = list.filter(o => {
       const t = new Date(o.createdAt).getTime()
       return t >= startMs && t <= endMs
     })
+    console.log('[getDashboard] inRange(completed-in-window):', inRange.length, 'timeFilter:', timeFilter, 'range:', { startMs, endMs })
+    console.log('[getDashboard] legacyInRange(created-in-window):', legacyInRange.length, 'inRange.length:', inRange.length)
+    console.log('[getDashboard] inRange detail:', inRange.map(o => ({
+      _id: o._id, orderNo: o.orderNo, createdAt: o.createdAt, updatedAt: o.updatedAt, completedAt: o.completedAt, status: o.status
+    })))
     const todayOrders = inRange.length
+    // 销售额用同一组完成订单,口径一致
     const totalSales = inRange
-      .filter(o => o.status === 'completed')
       .reduce((s, o) => s + (Number(o.payAmount || o.totalAmount) || 0), 0)
 
     // 待处理：所有未完成订单（与 4 圈圈口径一致，不受 timeFilter 影响）
     // 用 normalizeOrderStatus 兼容 canonical 英文值 + 中文标签（如"已接单"）
     const pendingOrders = list.filter(o =>
-      ['pending_payment', 'paid', 'pending_sorting', 'sorting'].includes(normalizeOrderStatus(o.status))
+      ['pending_payment', 'paid', 'pending_sorting', 'sorting', 'refunding'].includes(normalizeOrderStatus(o.status))
     ).length
 
     // 4 状态圈圈：所有时间累计
@@ -1442,9 +1715,28 @@ module.exports = {
       completed: list.filter(o => normalizeOrderStatus(o.status) === 'completed').length
     }
 
-    // 在线商品：一次 count 查询
-    const p = await db.collection('products').where({ merchantId, status: 'online' }).count()
-    const onlineProducts = (p.result && p.result.total) || 0
+    // 在线商品：商品管理(全部 products) + 团购特惠页面(fsp_)总和
+    // 不按 merchantId 过滤:单商家场景,storage 里的 merchantId 与数据里可能不一致(uni-id uid vs seed m_test_001),
+    // 硬卡 merchantId 会静默返回 0。商家要的是"自己平台上有多少商品",直接全集合计数最稳。
+    // 用 .get() 代替 .count(),某些 uniCloud 版本 .count() 不带 where 时返回结构异常
+    const allProductsRes = await db.collection('products').limit(2000).get()
+    const productCount = (allProductsRes.data || []).length
+    const fsAll = await db.collection('flash_sales').limit(500).get()
+    const flashSaleProductCount = (fsAll.data || []).reduce((sum, fs) => sum + ((fs.products || []).length), 0)
+    const onlineProducts = productCount + flashSaleProductCount
+    console.log('[getDashboard] onlineProducts breakdown:', { productCount, flashSaleProductCount, onlineProducts, totalProducts: productCount, totalFsDocs: (fsAll.data || []).length })
+
+    // 访客数 + 转化率:从 product_views 聚合(同 viewerId 同日去重由 _id 唯一约束保证)
+    const viewsAll = await db.collection('product_views').where({ merchantId }).limit(50000).get()
+    const viewList = (viewsAll.data || []).filter(v => {
+      const t = new Date(v.createdAt).getTime()
+      return t >= startMs && t <= endMs
+    })
+    const visitorSet = new Set(viewList.map(v => v.viewerId || 'anon'))
+    const totalVisitors = visitorSet.size
+    // 转化率:窗口内完成的订单 / 窗口内独立访客,与"今日订单"口径一致(都是完成时间)
+    const completedCount = inRange.length
+    const conversionRate = totalVisitors > 0 ? Number((completedCount / totalVisitors * 100).toFixed(1)) : 0
 
     return {
       code: 0,
@@ -1452,15 +1744,197 @@ module.exports = {
         timeRange: { type: timeFilter, label: range.label, start: range.start, end: range.end },
         todayOrders,
         totalSales: Number(totalSales.toFixed(2)),
+        totalVisitors,
+        conversionRate,
         pendingOrders,
         onlineProducts,
-        counts
+        counts,
+        // 调试用:可帮助确认云函数是否跑的是新代码
+        _debug: { productCount, flashSaleProductCount, totalProducts: productCount }
       }
     }
   },
 
+  // 数据报表:总览 4 卡片复用 getDashboard,补全销售趋势 / 商品排行 / 分类占比
   async getReportData(params) {
-    return await this.getDashboard(params)
+    const _p = (params && Object.keys(params).length) ? params : (this.event || {})
+    let merchantId = _p.merchantId
+    const timeFilter = _p.timeFilter || 'today'
+    const customDate = _p.customDate || ''
+    if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
+
+    // 商家回退:与 getDashboard 一致
+    {
+      const m = await db.collection('merchants').doc(merchantId).get()
+      if (!m.data || !m.data.length) {
+        const all = await db.collection('merchants').limit(2).get()
+        if (all.data && all.data.length === 1) {
+          merchantId = all.data[0]._id
+        }
+      }
+    }
+
+    const range = computeTimeRange(timeFilter, customDate)
+    const startMs = range.start.getTime()
+    const endMs = range.end.getTime()
+
+    // 拉订单:走 status='completed' 索引(单商家场景下命中率高,避免 5000 上限截断)
+    // 完成时间窗口在内存里二次过滤(uniCloud 的 OR/AND 复合不靠谱,内存过滤更稳)
+    // merchantId 兜底:与 getDashboard 一致,storage ID 与实际 ID 不一致时降级全集合
+    let ordersRes = await db.collection('orders').where({
+      merchantId,
+      status: 'completed'
+    }).limit(5000).get()
+    let allCompleted = ordersRes.data || []
+    if (allCompleted.length === 0) {
+      const fb = await db.collection('orders').where({
+        status: 'completed'
+      }).limit(5000).get()
+      allCompleted = fb.data || []
+      if (allCompleted.length > 0) {
+        console.warn('[getReportData] orders 按 merchantId 查为空,降级全集合,共:', allCompleted.length)
+      }
+    }
+    // 内存过滤:完成时间在窗口内(优先 completedAt,缺省 updatedAt 兜底)
+    const orders = allCompleted.filter(o => {
+      const t = o.completedAt ? new Date(o.completedAt).getTime()
+            : o.updatedAt  ? new Date(o.updatedAt).getTime() : 0
+      return t >= startMs && t <= endMs
+    })
+    console.log('[getReportData] inWindow(completed):', orders.length, 'timeFilter:', timeFilter, 'allCompleted:', allCompleted.length)
+
+    // 1. 销售趋势:按时段分桶
+    // today → 按小时(0-23); week → 按天(7 天); month → 按天(本月 1-30/31)
+    const buckets = []
+    const now = new Date()
+    if (timeFilter === 'today') {
+      const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0)
+      for (let h = 0; h < 24; h++) {
+        buckets.push({
+          label: h + '时',
+          start: dayStart.getTime() + h * 3600000,
+          end:   dayStart.getTime() + (h + 1) * 3600000
+        })
+      }
+    } else if (timeFilter === 'week') {
+      const monday = new Date(now)
+      monday.setDate(now.getDate() - ((monday.getDay() + 6) % 7))
+      monday.setHours(0, 0, 0, 0)
+      for (let d = 0; d < 7; d++) {
+        const dayStart = new Date(monday); dayStart.setDate(monday.getDate() + d)
+        const dayEnd = new Date(dayStart); dayEnd.setDate(dayStart.getDate() + 1)
+        buckets.push({
+          label: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][d],
+          start: dayStart.getTime(),
+          end: dayEnd.getTime()
+        })
+      }
+    } else if (timeFilter === 'month') {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1)
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+      const days = Math.round((last - first) / 86400000)
+      for (let d = 0; d < days; d++) {
+        const dayStart = new Date(first); dayStart.setDate(first.getDate() + d)
+        const dayEnd = new Date(dayStart); dayEnd.setDate(dayStart.getDate() + 1)
+        buckets.push({
+          label: (d + 1) + '日',
+          start: dayStart.getTime(),
+          end: dayEnd.getTime()
+        })
+      }
+    } else {
+      // custom 或兜底:按 6 段均分
+      const step = Math.max(1, Math.floor((endMs - startMs) / 6))
+      for (let i = 0; i < 6; i++) {
+        buckets.push({
+          label: '段' + (i + 1),
+          start: startMs + i * step,
+          end: startMs + (i + 1) * step
+        })
+      }
+    }
+    // 销售趋势:按"完成时间"分桶(旧版按 createdAt 会漏算跨日完成的订单)
+    const salesTrend = buckets.map(b => {
+      const inBucket = orders.filter(o => {
+        const t = o.completedAt ? new Date(o.completedAt).getTime()
+              : o.updatedAt  ? new Date(o.updatedAt).getTime() : 0
+        return t >= b.start && t < b.end
+      })
+      const value = inBucket.reduce((s, o) => s + (Number(o.payAmount || o.totalAmount) || 0), 0)
+      return { label: b.label, value: Number(value.toFixed(2)) }
+    })
+
+    // 2. 商品销售排行:聚合 orders.items,按 productId 累计 qty + amount,top 10
+    const productAgg = {}
+    for (const o of orders) {
+      for (const it of (o.items || [])) {
+        const key = it.productId || it.name  // 兼容没 productId 的
+        if (!key) continue
+        if (!productAgg[key]) {
+          productAgg[key] = {
+            productId: it.productId || null,
+            name: it.name || '未知商品',
+            qty: 0,
+            amount: 0
+          }
+        }
+        productAgg[key].qty += Number(it.qty || 0)
+        productAgg[key].amount += Number(it.itemTotal || (it.price * it.qty) || 0)
+      }
+    }
+    const productRanking = Object.values(productAgg)
+      .map(p => ({ ...p, amount: Number(p.amount.toFixed(2)) }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 10)
+
+    // 3. 分类销售占比:item.categoryId 优先,否则 item.name 查 products.name → categoryName,再否则「其他」
+    // 同 getDashboard:不卡 merchantId(单商家场景,storage 的 ID 与数据 ID 可能不一致)
+    const allProducts = await db.collection('products').limit(2000).get()
+    const nameToCat = {}
+    for (const p of (allProducts.data || [])) {
+      if (p.name && p.categoryName) {
+        if (!nameToCat[p.name]) nameToCat[p.name] = p.categoryName
+        if (p.categoryId && p.categoryName) {
+          nameToCat[p.categoryId] = p.categoryName
+        }
+      }
+    }
+    const catAgg = {}
+    let catTotal = 0
+    for (const o of orders) {
+      for (const it of (o.items || [])) {
+        let catName = null
+        if (it.categoryId && nameToCat[it.categoryId]) catName = nameToCat[it.categoryId]
+        else if (it.categoryName) catName = it.categoryName
+        else if (it.name && nameToCat[it.name]) catName = nameToCat[it.name]
+        if (!catName) catName = '其他'
+        const amt = Number(it.itemTotal || (it.price * it.qty) || 0)
+        if (!catAgg[catName]) catAgg[catName] = { name: catName, amount: 0, qty: 0 }
+        catAgg[catName].amount += amt
+        catAgg[catName].qty += Number(it.qty || 0)
+        catTotal += amt
+      }
+    }
+    const COLORS = ['#4CAF50', '#FF6B00', '#2196F3', '#9C27B0', '#607D8B', '#FFC107', '#E91E63', '#00BCD4']
+    const categoryShare = Object.values(catAgg)
+      .map((c, i) => ({
+        name: c.name,
+        amount: Number(c.amount.toFixed(2)),
+        qty: c.qty,
+        percent: catTotal > 0 ? Number((c.amount / catTotal * 100).toFixed(1)) : 0,
+        color: COLORS[i % COLORS.length]
+      }))
+      .sort((a, b) => b.amount - a.amount)
+
+    return {
+      code: 0,
+      data: {
+        salesTrend,
+        productRanking,
+        categoryShare,
+        totalAmount: Number(catTotal.toFixed(2))
+      }
+    }
   },
 
   // ==================== IM 通讯 ====================
@@ -1639,7 +2113,26 @@ module.exports = {
     const where = {}
     if (params.merchantId) where.merchantId = params.merchantId
     const r = await db.collection('flash_sales').where(where).orderBy('startTime', 'desc').get()
-    return { code: 0, data: r.data || [] }
+    const list = r.data || []
+    // 旧数据无 type 字段,默认视为 fixed
+    const tagged = list.map(s => ({ ...s, type: s.type || 'fixed' }))
+    // 内存互斥:同 merchantId 下,若 daily 有 status=true,则把同 merchant 所有 fixed 标 false;反之亦然(防止脏数据被读到)
+    const grouped = {}
+    for (const s of tagged) {
+      const k = s.merchantId || '_no_merchant_'
+      if (!grouped[k]) grouped[k] = []
+      grouped[k].push(s)
+    }
+    for (const k of Object.keys(grouped)) {
+      const items = grouped[k]
+      const hasDailyOpen = items.some(s => s.type === 'daily' && s.status === true)
+      const hasFixedOpen = items.some(s => s.type === 'fixed' && s.status === true)
+      for (const s of items) {
+        if (hasDailyOpen && s.type === 'fixed') s.status = false
+        if (hasFixedOpen && s.type === 'daily') s.status = false
+      }
+    }
+    return { code: 0, data: tagged }
   },
 
   async saveFlashSale(data) {
@@ -1647,6 +2140,9 @@ module.exports = {
     var data = data_unwrapped
     // 兼容前端传 id 或 _id
     const existingId = data._id || data.id
+    const docType = data.type || 'fixed'
+    const merchantId = data.merchantId || null
+    let savedId = existingId
     if (existingId) {
       // update：不改 createdAt，不接受前端传 id
       const update = {
@@ -1654,10 +2150,13 @@ module.exports = {
         startTime: data.startTime,
         endTime: data.endTime,
         status: data.status,
+        type: docType,
+        dailyStart: data.dailyStart || null,
+        dailyEnd: data.dailyEnd || null,
+        merchantId: merchantId,
         updatedAt: new Date()
       }
       await db.collection('flash_sales').doc(existingId).update(update)
-      return { code: 0, data: { id: existingId, _id: existingId } }
     } else {
       // add
       const doc = {
@@ -1666,12 +2165,34 @@ module.exports = {
         startTime: data.startTime,
         endTime: data.endTime,
         status: data.status !== undefined ? data.status : true,
+        type: docType,
+        dailyStart: data.dailyStart || null,
+        dailyEnd: data.dailyEnd || null,
+        merchantId: merchantId,
         createdAt: new Date(),
         updatedAt: new Date()
       }
       await db.collection('flash_sales').add(doc)
-      return { code: 0, data: { id: doc._id, _id: doc._id } }
+      savedId = doc._id
     }
+    // 写库互斥:status=true 时,关闭同 merchantId 下其它已开启的 daily + 全部已开启的异 type
+    if (data.status === true) {
+      const otherType = docType === 'daily' ? 'fixed' : 'daily'
+      // 关闭同 type 其它已开启的(排除自己)
+      const sameTypeWhere = { type: docType, status: true }
+      if (merchantId) sameTypeWhere.merchantId = merchantId
+      if (savedId) sameTypeWhere._id = db.command.neq(savedId)
+      await db.collection('flash_sales').where(sameTypeWhere).update({ status: false, updatedAt: new Date() })
+      // 关闭异 type 全部已开启的
+      const otherTypeWhere = { type: otherType, status: true }
+      if (merchantId) otherTypeWhere.merchantId = merchantId
+      await db.collection('flash_sales').where(otherTypeWhere).update({ status: false, updatedAt: new Date() })
+      // 把自己重新打开(防止 same type 误关到自己;虽然有 _id neq 但还是显式置回)
+      if (savedId) {
+        await db.collection('flash_sales').doc(savedId).update({ status: true, updatedAt: new Date() })
+      }
+    }
+    return { code: 0, data: { id: savedId, _id: savedId } }
   },
 
   // ==================== 特惠商品（Flash Sale Products） ====================
@@ -1683,7 +2204,17 @@ module.exports = {
     const { flashSaleId } = params
     const r = await db.collection('flash_sales').doc(flashSaleId).get()
     const fs = r.data && r.data[0]
-    const list = (fs && fs.products) || []
+    let list = (fs && fs.products) || []
+    // 兜底:daily 文档无商品时,自动读同 merchant 的 fixed 文档的商品(商品只存一处,统一从固定活动拿)
+    if (list.length === 0 && fs && (fs.type || 'fixed') === 'daily' && fs.merchantId) {
+      const fb = await db.collection('flash_sales')
+        .where({ merchantId: fs.merchantId, type: 'fixed' })
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get()
+      const fixedDoc = fb.data && fb.data[0]
+      if (fixedDoc) list = fixedDoc.products || []
+    }
     await resolveFileIdsInItems(list)
     return { code: 0, data: list }
   },
@@ -1692,12 +2223,19 @@ module.exports = {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
     // 前端 saveProduct / addSelectedProducts 发的是 name/image/originalPrice/flashPrice/stock/specs
-    const { flashSaleId, name, image, originalPrice, flashPrice, stock, specs } = params
+    // 可选 categoryId/categoryName(从商品库选时由商家端 addFromLib 传入),用于报表分类占比聚合
+    const { flashSaleId, name, image, originalPrice, flashPrice, stock, specs, categoryId, categoryName } = params
     if (!flashSaleId) return { code: -1, msg: 'flashSaleId 必填' }
     const r = await db.collection('flash_sales').doc(flashSaleId).get()
     const fs = r.data && r.data[0]
     if (!fs) return { code: -1, msg: '特惠活动不存在' }
-    const newProduct = { _id: 'fsp_' + Date.now(), name, image, originalPrice, flashPrice, stock, specs: specs || [] }
+    const newProduct = {
+      _id: 'fsp_' + Date.now(),
+      name, image, originalPrice, flashPrice, stock,
+      specs: specs || [],
+      categoryId: categoryId || null,
+      categoryName: categoryName || null
+    }
     const products = (fs.products || []).concat([newProduct])
     await db.collection('flash_sales').doc(flashSaleId).update({ products, updatedAt: new Date() })
     return { code: 0, data: { success: true, product: newProduct } }
@@ -1733,6 +2271,40 @@ module.exports = {
     return { code: 0, data: { success: true } }
   },
 
+  // ==================== 商品浏览埋点(用户端进入商品详情时调用,写入 product_views) ====================
+  // _id = `${viewerId}#${productId}#${YYYY-MM-DD}` 同用户同商品同日去重
+  // viewerId 来自用户端本地缓存(无登录态时为随机 uuid),productId 来自商品详情
+  // 用于报表「总访客 / 转化率」统计
+  async recordProductView(params) {
+    const _p = (params && Object.keys(params).length) ? params : (this.event || {})
+    const { merchantId, productId, viewerId } = _p
+    if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
+    if (!productId) return { code: -1, msg: 'productId 必填' }
+    if (!viewerId) return { code: -1, msg: 'viewerId 必填' }
+
+    const day = new Date()
+    const ymd = day.getFullYear() + '-' + String(day.getMonth() + 1).padStart(2, '0') + '-' + String(day.getDate()).padStart(2, '0')
+    const viewId = `${viewerId}#${productId}#${ymd}`
+
+    try {
+      await db.collection('product_views').add({
+        _id: viewId,
+        merchantId,
+        productId,
+        viewerId,
+        ymd,
+        createdAt: new Date()
+      })
+      return { code: 0, data: { success: true, viewId, deduped: false } }
+    } catch (e) {
+      // 重复 _id 走兜底:同日同用户同商品只算一次
+      if (e && (e.errCode === 'DOC_ID_DUPLICATE' || /duplicate/i.test(e.errMsg || ''))) {
+        return { code: 0, data: { success: true, viewId, deduped: true } }
+      }
+      return { code: -1, msg: e.errMsg || e.message || '记录失败' }
+    }
+  },
+
   // ==================== 图片上传（占位） ====================
 
   async uploadImage(params) {
@@ -1754,7 +2326,63 @@ module.exports = {
   },
 
   async fixProductCategories() {
-    return { code: 0, data: { fixed: 0, note: '无分类错位，无需修复' } }
+    // 批量修正旧分类名 → 新分类名，并同步修正 category 字段（key）
+    const nameMap = {
+      '蔬菜': '有机蔬菜', '水果': '新鲜水果', '肉禽': '肉禽蛋类', '日用品': '日用百货'
+    }
+    const keyMap = {
+      'vegetable': 'organic_vegetable', 'fruit': 'fresh_fruit', 'meat': 'meat_egg',
+      'c_veg': 'c_organic_veg', 'c_fruit': 'c_fresh_fruit', 'c_meat': 'c_meat_egg'
+    }
+    const allProducts = await db.collection('products').limit(2000).get()
+    const products = allProducts.data || []
+    let fixed = 0
+    const results = []
+    for (const p of products) {
+      const update = {}
+      const oldName = p.categoryName
+      const oldKey = p.category
+      if (oldName && nameMap[oldName]) update.categoryName = nameMap[oldName]
+      if (oldKey && keyMap[oldKey]) update.category = keyMap[oldKey]
+      if (Object.keys(update).length > 0) {
+        await db.collection('products').doc(p._id).update(update)
+        fixed++
+        results.push({ _id: p._id, name: p.name, from: { categoryName: oldName, category: oldKey }, to: update })
+      }
+    }
+    return { code: 0, data: { fixed, results } }
+  },
+
+  async seedCategories(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    let merchantId = params.merchantId
+    if (!merchantId) {
+      const all = await db.collection('merchants').limit(2).get()
+      if (all.data && all.data.length === 1) merchantId = all.data[0]._id
+    }
+    if (!merchantId) return { code: -1, msg: 'merchantId 必填' }
+    const now = new Date()
+    const cats = [
+      { _id: 'c_organic_veg', name: '有机蔬菜', key: 'organic_vegetable', sort: 1, icon: '🥬' },
+      { _id: 'c_fresh_fruit', name: '新鲜水果', key: 'fresh_fruit',       sort: 2, icon: '🍎' },
+      { _id: 'c_meat_egg',    name: '肉禽蛋类', key: 'meat_egg',          sort: 3, icon: '🥩' },
+      { _id: 'c_mushroom',    name: '菌菇干货', key: 'mushroom',          sort: 4, icon: '🍄' },
+      { _id: 'c_tofu',        name: '豆制品',   key: 'tofu',              sort: 5, icon: '🫘' },
+      { _id: 'c_root',        name: '根茎类',   key: 'root_vegetable',   sort: 6, icon: '🥔' },
+      { _id: 'c_daily',       name: '日用百货', key: 'daily_goods',      sort: 7, icon: '🧹' }
+    ]
+    const results = []
+    for (const c of cats) {
+      const existing = await db.collection('categories').where({ _id: c._id }).get()
+      if (existing.data && existing.data.length) {
+        results.push({ name: c.name, _action: 'exists' })
+      } else {
+        await db.collection('categories').add({ ...c, merchantId, createdAt: now, updatedAt: now })
+        results.push({ name: c.name, _action: 'created' })
+      }
+    }
+    return { code: 0, data: { created: results.filter(r => r._action === 'created').length, results } }
   },
 
   async diagnoseCategories() {
@@ -1872,6 +2500,68 @@ module.exports = {
       if (p.commentCount !== undefined && p.comments === undefined) p.comments = p.commentCount
     })
     return { code: 0, data: posts }
+  },
+
+  async getPostDetail(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { postId, userId } = params
+    if (!postId) return { code: -1, msg: 'postId 必填' }
+    // 用 .doc(postId) 精确匹配,不暴露用户隐私(社区公共流用 getPosts,详情按 ID 走这里)
+    const r = await db.collection('posts').doc(postId).get()
+    const post = r.data && r.data[0]
+    if (!post) return { code: -1, msg: '帖子不存在' }
+    // 软删帖子不可见(与 getMyPosts 一致)
+    if (post.status === 'deleted') return { code: -1, msg: '帖子已删除' }
+    // 兼容老字段名
+    if (post.likeCount !== undefined && post.likes === undefined) post.likes = post.likeCount
+    if (post.commentCount !== undefined && post.comments === undefined) post.comments = post.comments || post.commentCount
+    // join 作者昵称/头像/认证状态(与 getPosts 一致)
+    let authorNickname = ''
+    let authorAvatar = ''
+    let isCertified = false
+    if (post.userId) {
+      const ur = await db.collection('users').doc(post.userId).field({ nickname: true, avatar: true }).get()
+      const u = ur.data && ur.data[0]
+      if (u) { authorNickname = u.nickname || ''; authorAvatar = u.avatar || '' }
+      const cr = await db.collection('certifications').where({ userId: post.userId, status: 'certified' }).limit(1).get()
+      isCertified = !!(cr.data && cr.data.length)
+    } else if (post._openid) {
+      const ur = await db.collection('users').where({ wxOpenId: post._openid }).field({ nickname: true, avatar: true }).limit(1).get()
+      const u = ur.data && ur.data[0]
+      if (u) { authorNickname = u.nickname || ''; authorAvatar = u.avatar || '' }
+    }
+    post.authorNickname = authorNickname
+    post.authorAvatar = authorAvatar
+    post.isCertified = isCertified
+    // 当前用户是否已点赞(详情页要用)
+    if (userId) {
+      const lr = await db.collection('likes').where({ postId, userId }).limit(1).get()
+      post.isLiked = !!(lr.data && lr.data.length)
+    }
+    // 与 getProductDetail 一致:返回解包后的单个对象,而不是数组
+    return { code: 0, data: post }
+  },
+
+  async updatePost(params) {
+    const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
+    var params = params_unwrapped
+    const { id } = params
+    if (!id) return { code: -1, msg: 'id 必填' }
+    // 白名单:只允许更新这几个内容字段,其他(用户/作者/创建时间/点赞数/_id)一律不让改
+    // status 也排除,避免前端误传 status: 1 把"已隐藏"的帖子改回 active
+    const allowKeys = ['categoryIndex', 'categoryName', 'title', 'content', 'images', 'contactPhone', 'price']
+    const update = { updatedAt: new Date() }
+    allowKeys.forEach(k => { if (params[k] !== undefined) update[k] = params[k] })
+    try {
+      const res = await db.collection('posts').doc(id).update(update)
+      if (res.updated === 0) {
+        return { code: -1, msg: '帖子不存在或未变更' }
+      }
+      return { code: 0, data: { _id: id, updated: res.updated } }
+    } catch (e) {
+      return { code: -1, msg: '保存失败:' + (e.message || e.errMsg || '') }
+    }
   },
 
   async createPost(data) {
@@ -1999,7 +2689,10 @@ module.exports = {
     const params_unwrapped = ((params && params.params) || (params && Object.keys(params).length ? params : null) || (this.event && this.event.params) || this.event || {})
     var params = params_unwrapped
     const { userId, page, pageSize } = params
-    const r = await db.collection('posts').where({ userId }).orderBy('createdAt', 'desc').get()
+    // 排除软删帖子(status='deleted'),否则用户点删除后下次登录"我的发布"里还能看到。
+    // 下架('closed')保留可见,方便用户恢复。
+    const where = { userId, status: dbCmd.neq('deleted') }
+    const r = await db.collection('posts').where(where).orderBy('createdAt', 'desc').get()
     return { code: 0, data: r.data || [] }
   },
 
@@ -2560,9 +3253,13 @@ module.exports = {
     report.merchants.push(m)
 
     const cats = [
-      { _id: 'c_veg',  name: '蔬菜', key: 'vegetable', sort: 1, icon: '🥬' },
-      { _id: 'c_fruit',name: '水果', key: 'fruit',     sort: 2, icon: '🍎' },
-      { _id: 'c_meat', name: '肉禽', key: 'meat',      sort: 3, icon: '🍖' }
+      { _id: 'c_organic_veg',  name: '有机蔬菜', key: 'organic_vegetable', sort: 1, icon: '🥬' },
+      { _id: 'c_fresh_fruit',  name: '新鲜水果', key: 'fresh_fruit',       sort: 2, icon: '🍎' },
+      { _id: 'c_meat_egg',     name: '肉禽蛋类', key: 'meat_egg',          sort: 3, icon: '🥩' },
+      { _id: 'c_mushroom',     name: '菌菇干货', key: 'mushroom',          sort: 4, icon: '🍄' },
+      { _id: 'c_tofu',         name: '豆制品',   key: 'tofu',              sort: 5, icon: '🫘' },
+      { _id: 'c_root',         name: '根茎类',   key: 'root_vegetable',   sort: 6, icon: '🥔' },
+      { _id: 'c_daily',        name: '日用百货', key: 'daily_goods',      sort: 7, icon: '🧹' }
     ]
     for (const c of cats) {
       const r = await ensureSeedDoc('categories', { ...c, merchantId, createdAt: new Date(), updatedAt: new Date() })
@@ -2570,11 +3267,11 @@ module.exports = {
     }
 
     const products = [
-      { _id: 'p_001', category: 'c_veg',   name: '本地青菜',     spec: '500g', price: 3.5,  originalPrice: 5.0,  stock: 100, coverImage: 'https://img.icons8.com/color/96/broccoli.png', tags: ['新鲜', '当日采摘'], status: 'online' },
-      { _id: 'p_002', category: 'c_veg',   name: '西红柿',       spec: '500g', price: 4.8,  originalPrice: 6.0,  stock: 80,  coverImage: 'https://img.icons8.com/color/96/tomato.png',     tags: ['沙瓤'],         status: 'online' },
-      { _id: 'p_003', category: 'c_fruit', name: '山东红富士',   spec: '1kg',  price: 9.9,  originalPrice: 12.0, stock: 60,  coverImage: 'https://img.icons8.com/color/96/apple.png',       tags: ['脆甜'],         status: 'online' },
-      { _id: 'p_004', category: 'c_fruit', name: '海南香蕉',     spec: '1kg',  price: 6.5,  originalPrice: 8.0,  stock: 50,  coverImage: 'https://img.icons8.com/color/96/banana.png',      tags: ['自然熟'],       status: 'online' },
-      { _id: 'p_005', category: 'c_meat',  name: '土鸡蛋',       spec: '30枚', price: 28.0, originalPrice: 35.0, stock: 40,  coverImage: 'https://img.icons8.com/color/96/eggs.png',        tags: ['散养'],         status: 'online' }
+      { _id: 'p_001', category: 'c_organic_veg', name: '本地青菜',   spec: '500g', price: 3.5,  originalPrice: 5.0,  stock: 100, coverImage: 'https://img.icons8.com/color/96/broccoli.png', tags: ['新鲜', '当日采摘'], status: 'online' },
+      { _id: 'p_002', category: 'c_organic_veg', name: '西红柿',     spec: '500g', price: 4.8,  originalPrice: 6.0,  stock: 80,  coverImage: 'https://img.icons8.com/color/96/tomato.png',     tags: ['沙瓤'],         status: 'online' },
+      { _id: 'p_003', category: 'c_fresh_fruit', name: '山东红富士', spec: '1kg',  price: 9.9,  originalPrice: 12.0, stock: 60,  coverImage: 'https://img.icons8.com/color/96/apple.png',       tags: ['脆甜'],         status: 'online' },
+      { _id: 'p_004', category: 'c_fresh_fruit', name: '海南香蕉',   spec: '1kg',  price: 6.5,  originalPrice: 8.0,  stock: 50,  coverImage: 'https://img.icons8.com/color/96/banana.png',      tags: ['自然熟'],       status: 'online' },
+      { _id: 'p_005', category: 'c_meat_egg',    name: '土鸡蛋',     spec: '30枚', price: 28.0, originalPrice: 35.0, stock: 40,  coverImage: 'https://img.icons8.com/color/96/eggs.png',        tags: ['散养'],         status: 'online' }
     ]
     for (const p of products) {
       const r = await ensureSeedDoc('products', { ...p, merchantId, sold: 0, images: [p.coverImage], description: p.name, createdAt: new Date(), updatedAt: new Date() })

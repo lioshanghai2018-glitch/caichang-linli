@@ -2,6 +2,7 @@
 import { isLoggedIn } from './utils/auth.js'
 import { initPush, onPushMessage } from './utils/push.js'
 
+
 // 不需要登录的页面白名单
 const WHITE_LIST = [
   'pages/login/index'

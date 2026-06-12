@@ -1,0 +1,765 @@
+<template>
+<view class="page">
+  <!-- 双标签栏 -->
+  <view class="tab-bar">
+    <view class="tab-item" :class="{ active: activeTab === 0 }" hover-class="tab-item-hover" @click.stop="activeTab = 0">
+      <text>待处理订单</text>
+    </view>
+    <view class="tab-item" :class="{ active: activeTab === 1 }" hover-class="tab-item-hover" @click.stop="activeTab = 1">
+      <text>退款审核</text>
+      <view class="tab-badge" v-if="tabs[1].count > 0">
+        <text>{{ tabs[1].count > 99 ? '99+' : tabs[1].count }}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 待处理订单列表 -->
+  <scroll-view v-if="activeTab === 0" class="list" scroll-y @scrolltolower="loadMoreOrders">
+    playNewOrderSound() {
+      try { uni.vibrateLong() } catch(e) {}
+      try {
+        const audio = uni.createInnerAudioContext()
+        audio.src = '/static/notify.wav'
+        audio.onCanplay = () => { audio.play() }
+        audio.onError = () => { audio.destroy() }
+      } catch(e) {}
+    },
+
+    <view v-for="(order, idx) in orderList" :key="idx" class="order-card" @tap="goOrderDetail(order)">
+      <view class="card-header">
+        <text class="order-no">订单号：{{order.orderNo}}</text>
+        <view class="header-right">
+          <view class="delivery-type-tag" :class="order.deliveryType">
+            <text>{{order.deliveryType === 'delivery' ? '配送' : '自提'}}</text>
+          </view>
+          <view class="order-status" :style="{background: order.statusBg, color: order.statusColor}">
+            <text>{{order.statusText}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="card-body">
+        <view class="goods-list">
+          <view class="goods-item" v-for="(goods, gi) in order.goods" :key="gi">
+            <text class="goods-name">{{goods.name}}</text>
+            <text class="goods-qty">x{{goods.qty}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="card-footer">
+        <view class="customer-info">
+          <text class="customer-name">{{order.customerName}}</text>
+          <text class="customer-phone">{{order.customerPhone}}</text>
+          <text class="customer-address" v-if="order.customerAddress">{{order.customerAddress}}</text>
+        </view>
+        <view class="order-amount">
+          <text class="amount-label">实付</text>
+          <text class="amount-value">¥{{order.payAmount}}</text>
+        </view>
+      </view>
+    </view>
+    <view class="load-more" v-if="orderList.length > 0">
+      <text v-if="orderLoading">加载中…</text>
+      <text v-else-if="orderNoMore">没有更多了</text>
+      <text v-else @tap="loadMoreOrders">加载更多</text>
+    </view>
+    <view class="empty-state" v-if="orderList.length === 0 && !orderLoading">
+      <text>暂无待处理订单</text>
+    </view>
+  </scroll-view>
+
+  <!-- 退款审核列表 -->
+  <scroll-view v-if="activeTab === 1" class="list" scroll-y @scrolltolower="loadMoreRefunds">
+    <view v-for="(refund, idx) in refundList" :key="idx" class="refund-card" @tap="openRefundDetail(refund)">
+      <view class="card-header">
+        <text class="refund-order-no">订单号：{{ refund.orderNo }}</text>
+        <view class="status-chip pending">
+          <text>待审核</text>
+        </view>
+      </view>
+      <view class="card-body">
+        <view class="goods-list" v-if="refund.order && refund.order.items && refund.order.items.length > 0">
+          <view class="goods-item" v-for="(goods, gi) in refund.order.items" :key="gi">
+            <text class="goods-name">{{goods.productName || goods.name}}</text>
+            <text class="goods-qty">x{{goods.quantity || goods.qty || 1}}</text>
+          </view>
+        </view>
+        <view class="info-row">
+          <text class="info-label">退款类型</text>
+          <text class="info-value">{{ refundTypeLabel(refund.type) }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">退款金额</text>
+          <text class="info-value price">¥{{ refund.refundAmount || (refund.order && refund.order.payAmount) || (refund.order && refund.order.totalAmount) || 0 }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">申请原因</text>
+          <text class="info-value">{{ refund.reason || '-' }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">申请时间</text>
+          <text class="info-value">{{ formatTime(refund.createdAt) }}</text>
+        </view>
+      </view>
+    </view>
+    <view class="load-more" v-if="refundList.length > 0">
+      <text v-if="refundLoading">加载中…</text>
+      <text v-else-if="refundNoMore">没有更多了</text>
+      <text v-else @tap="loadMoreRefunds">加载更多</text>
+    </view>
+    <view class="empty-state" v-if="refundList.length === 0 && !refundLoading">
+      <text>暂无待审核退款</text>
+    </view>
+  </scroll-view>
+
+  <!-- 退款详情弹窗 -->
+  <view class="popup-mask" v-if="showPopup" @tap="closePopup"></view>
+  <view class="popup-sheet" :class="{ show: showPopup }">
+    <view class="popup-header">
+      <text class="popup-title">退款详情</text>
+      <text class="popup-close" @tap="closePopup">✕</text>
+    </view>
+    <scroll-view class="popup-body" scroll-y>
+      <view class="detail-section">
+        <text class="detail-label">订单号</text>
+        <text class="detail-value">{{ currentRefund.orderNo }}</text>
+      </view>
+      <view class="detail-section" v-if="currentRefund.order && currentRefund.order.items && currentRefund.order.items.length > 0">
+        <text class="detail-label">商品明细</text>
+        <view class="goods-list">
+          <view class="goods-item" v-for="(goods, gi) in currentRefund.order.items" :key="gi">
+            <text class="goods-name">{{goods.productName || goods.name}}</text>
+            <text class="goods-qty">x{{goods.quantity || goods.qty || 1}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="detail-section">
+        <text class="detail-label">退款类型</text>
+        <text class="detail-value">{{ refundTypeLabel(currentRefund.type) }}</text>
+      </view>
+      <view class="detail-section">
+        <text class="detail-label">退款金额（点击修改）</text>
+        <view class="amount-input-row">
+          <text class="amount-symbol">¥</text>
+          <input class="amount-input" type="digit" v-model="refundAmount" placeholder="请输入退款金额" />
+        </view>
+      </view>
+      <view class="detail-section">
+        <text class="detail-label">申请原因</text>
+        <text class="detail-value">{{ currentRefund.reason || '-' }}</text>
+      </view>
+      <!-- 图片凭证 -->
+      <view class="detail-section" v-if="currentRefund.images && currentRefund.images.length > 0">
+        <text class="detail-label">图片凭证</text>
+        <view class="image-grid">
+          <image
+            v-for="(img, ii) in currentRefund.images"
+            :key="ii"
+            :src="img"
+            mode="aspectFill"
+            class="proof-image"
+            @tap="previewImage(img)"
+          />
+        </view>
+      </view>
+      <!-- 拒绝原因输入 -->
+      <view class="detail-section">
+        <text class="detail-label">拒绝原因（选填，拒绝后将显示给用户）</text>
+        <textarea
+          class="reject-input"
+          v-model="rejectReason"
+      prevOrderCount: 0,
+      refreshTimer: null
+          placeholder="请输入拒绝原因，留空则使用默认原因"
+          maxlength="200"
+        />
+      </view>
+    </scroll-view>
+    <view class="popup-actions">
+      <view class="action-btn reject" @tap="rejectRefund">
+        <text>拒绝</text>
+      </view>
+      <view class="action-btn approve" @tap="approveRefund">
+        <text>同意退款</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部占位 -->
+  <view class="bottom-placeholder"></view>
+</view>
+</template>
+
+<script>
+import { getOrders, listRefunds, processRefund } from '@/utils/api.js'
+import { ORDER_STATUS_TEXT } from '@/utils/config.js'
+
+const STATUS_STYLE = {
+  pending_payment: { color: '#FF6B00', bg: '#FFF3E0' },
+  paid: { color: '#FF6B00', bg: '#FFF3E0' },
+  pending_sorting: { color: '#FF6B00', bg: '#FFF3E0' },
+  sorting: { color: '#FF6B00', bg: '#FFF3E0' },
+  delivering: { color: '#4CAF50', bg: '#E8F5E9' },
+  ready_for_pickup: { color: '#388E3C', bg: '#E8F5E9' },
+  completed: { color: '#999999', bg: '#F5F5F5' },
+  cancelled: { color: '#999999', bg: '#F5F5F5' },
+  refunding: { color: '#FF6B00', bg: '#FFF3E0' },
+  refunded: { color: '#999999', bg: '#F5F5F5' }
+}
+
+function getStatusStyle(status) {
+  return STATUS_STYLE[status] || { color: '#666666', bg: '#F5F5F5' }
+}
+
+export default {
+  data() {
+    return {
+      activeTab: 0,
+      tabs: [
+        { label: '待处理订单', count: 0 },
+        { label: '退款审核', count: 0 }
+      ],
+      // 订单
+      orderList: [],
+      orderPage: 1,
+      orderLoading: false,
+      orderNoMore: false,
+      // 退款
+      refundList: [],
+      refundLoading: false,
+      refundNoMore: false,
+      // 弹窗
+      showPopup: false,
+      currentRefund: {},
+      refundAmount: 0,
+      rejectReason: ''
+    }
+  },
+  onLoad() {
+    this.fetchOrders()
+    this.fetchRefunds()
+  },
+  onShow() {
+    if (!this.refreshTimer) {
+      this.refreshTimer = setInterval(() => {
+        this.fetchOrders()
+        this.fetchRefunds()
+      }, 300000)
+    }
+  },
+  onHide() {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer)
+      this.refreshTimer = null
+    }
+  },
+  onPullDownRefresh() {
+    this.orderPage = 1
+    this.orderNoMore = false
+    this.refundList = []
+    this.refundNoMore = false
+    Promise.all([this.fetchOrders(), this.fetchRefunds()]).finally(() => {
+      uni.stopPullDownRefresh()
+    })
+  },
+  methods: {
+
+    async fetchOrders() {
+      this.orderLoading = true
+      try {
+        const targetStatuses = ['pending_sorting', 'sorting', 'ready_for_pickup']
+        const res = await getOrders({ page: this.orderPage, pageSize: 20 })
+        const list = (res.data || [])
+          .filter(o => targetStatuses.includes(o.status))
+          .map(o => {
+            const style = getStatusStyle(o.status)
+            return {
+              orderNo: o.orderNo ? String(o.orderNo).slice(-5) : '',
+              fullOrderNo: o.orderNo,
+              status: o.status,
+              statusText: ORDER_STATUS_TEXT[o.status] || o.status || '',
+              statusColor: style.color,
+              statusBg: style.bg,
+              deliveryType: o.deliveryType || 'self',
+              goods: (o.items || []).map(it => ({ name: it.productName || it.name, qty: it.quantity || it.qty || 1 })),
+              customerName: o.address?.name || o.customerName || '',
+              customerPhone: o.address?.phone || o.customerPhone || '',
+              customerAddress: [o.address?.address, o.address?.doorNo].filter(Boolean).join(' '),
+              payAmount: (o.payAmount != null ? o.payAmount : o.totalAmount != null ? o.totalAmount : 0).toFixed(2)
+            }
+          })
+        if (this.orderPage === 1) {
+          this.orderList = list
+        } else {
+          this.orderList = this.orderList.concat(list)
+        }
+        if (this.orderList.length > this.prevOrderCount && this.prevOrderCount > 0) {
+          this.playNewOrderSound()
+        }
+        this.prevOrderCount = this.orderList.length
+        this.orderNoMore = list.length < 20
+      } catch (e) {
+        console.error('fetchOrders failed:', e)
+      }
+      this.orderLoading = false
+    },
+    loadMoreOrders() {
+      if (this.orderLoading || this.orderNoMore) return
+      this.orderPage++
+      this.fetchOrders()
+    },
+    goOrderDetail(order) {
+      uni.navigateTo({ url: `/pages/order/detail?id=${order.fullOrderNo || order.orderNo}` })
+    },
+    async fetchRefunds() {
+      this.refundLoading = true
+      try {
+        const res = await listRefunds('pending')
+        this.refundList = res.data || []
+        this.tabs[1].count = this.refundList.length
+      } catch (e) {
+        console.error('fetchRefunds failed:', e)
+      }
+      this.refundLoading = false
+    },
+    loadMoreRefunds() {
+      // listRefunds with 'pending' returns all, no pagination needed
+    },
+    openRefundDetail(refund) {
+      this.currentRefund = refund
+      this.refundAmount = refund.refundAmount || (refund.order && refund.order.payAmount) || (refund.order && refund.order.totalAmount) || 0
+      this.rejectReason = ''
+      this.showPopup = true
+    },
+    closePopup() {
+      this.showPopup = false
+    },
+    async approveRefund() {
+      uni.showModal({
+        title: '确认同意退款',
+        content: '确定同意该退款申请吗？款项将退回用户账户。',
+        success: async (res) => {
+          if (!res.confirm) return
+          try {
+            await processRefund(this.currentRefund.orderId, 'approve', this.refundAmount || this.currentRefund.refundAmount || 0)
+            uni.showToast({ title: '退款已同意', icon: 'success' })
+            this.closePopup()
+            this.fetchRefunds()
+          } catch (e) {
+            uni.showToast({ title: (e && e.msg) || '操作失败', icon: 'none' })
+          }
+        }
+      })
+    },
+    async rejectRefund() {
+      const reason = this.rejectReason || ''
+      uni.showModal({
+        title: '确认拒绝退款',
+        content: reason ? `拒绝原因：${reason}` : '确定拒绝该退款申请吗？',
+        success: async (res) => {
+          if (!res.confirm) return
+          try {
+            await processRefund(this.currentRefund.orderId, 'reject', 0, reason)
+            uni.showToast({ title: '已拒绝退款', icon: 'success' })
+            this.closePopup()
+            this.fetchRefunds()
+          } catch (e) {
+            uni.showToast({ title: (e && e.msg) || '操作失败', icon: 'none' })
+          }
+        }
+      })
+    },
+    previewImage(src) {
+      const urls = (this.currentRefund.images || []).filter(Boolean)
+      uni.previewImage({ current: src, urls })
+    },
+    refundTypeLabel(type) {
+      const map = {
+        'return_refund': '退货退款',
+        'refund_only': '仅退款',
+        'exchange': '换货'
+      }
+      return map[type] || type || '-'
+    },
+    formatTime(t) {
+      if (!t) return '-'
+      const d = new Date(t)
+      const pad = (n) => String(n).padStart(2, '0')
+      return pad(d.getHours()) + ':' + pad(d.getMinutes())
+    }
+  }
+}
+</script>
+
+<style>
+.page {
+  background-color: #F5F1EB;
+  min-height: 100vh;
+  padding-bottom: 120rpx;
+}
+
+/* 双标签栏 */
+.tab-bar {
+  display: flex;
+  background: #FFFFFF;
+  padding: 0 24rpx;
+  border-bottom: 2rpx solid #F0F0F0;
+}
+.tab-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 88rpx;
+  position: relative;
+}
+.tab-item text {
+  font-size: 28rpx;
+  color: #666666;
+}
+.tab-item.active text {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #000000;
+}
+.tab-item-hover {
+  background: rgba(0,0,0,0.03);
+}
+.tab-item.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 64rpx;
+  height: 4rpx;
+  background: #4CAF50;
+  border-radius: 2rpx;
+}
+.tab-badge {
+  position: absolute;
+  top: 12rpx;
+  right: 12rpx;
+  min-width: 36rpx;
+  height: 36rpx;
+  background: #FF0000;
+  border-radius: 18rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8rpx;
+}
+.tab-badge text {
+  font-size: 20rpx;
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
+/* 列表 */
+.list {
+  padding: 20rpx;
+  height: calc(100vh - 88rpx - 120rpx);
+}
+
+/* 订单卡片 */
+.order-card {
+  background: #FFFFFF;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.delivery-type-tag {
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+}
+.delivery-type-tag text {
+  font-size: 22rpx;
+  font-weight: 500;
+}
+.delivery-type-tag.delivery {
+  background: #E3F2FD;
+}
+.delivery-type-tag.delivery text {
+  color: #1976D2;
+}
+.delivery-type-tag.self {
+  background: #FFF3E0;
+}
+.delivery-type-tag.self text {
+  color: #FF6B00;
+}
+.order-no {
+  font-size: 26rpx;
+  color: #666666;
+}
+.order-status {
+  padding: 4rpx 16rpx;
+  border-radius: 8rpx;
+}
+.order-status text {
+  font-size: 24rpx;
+  font-weight: 500;
+}
+.card-body {
+  border-bottom: 1rpx solid #F5F5F5;
+  padding-bottom: 16rpx;
+  margin-bottom: 16rpx;
+}
+.goods-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+.goods-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.goods-name {
+  font-size: 28rpx;
+  color: #333333;
+  flex: 1;
+}
+.goods-qty {
+  font-size: 26rpx;
+  color: #999999;
+  margin-left: 16rpx;
+}
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.customer-info {
+  display: flex;
+  flex-direction: column;
+}
+.customer-name {
+  font-size: 28rpx;
+  color: #000000;
+  font-weight: 500;
+}
+.customer-phone {
+  font-size: 24rpx;
+  color: #999999;
+  margin-top: 4rpx;
+}
+.customer-address {
+  font-size: 24rpx;
+  color: #999999;
+  margin-top: 4rpx;
+  display: block;
+}
+.order-amount {
+  display: flex;
+  align-items: baseline;
+}
+.amount-label {
+  font-size: 24rpx;
+  color: #999999;
+  margin-right: 4rpx;
+}
+.amount-value {
+  font-size: 32rpx;
+  color: #FF6B00;
+  font-weight: 600;
+}
+
+/* 退款卡片 */
+.refund-card {
+  background: #FFFFFF;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+  box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.04);
+}
+.refund-order-no {
+  font-size: 26rpx;
+  color: #333333;
+}
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8rpx 0;
+}
+.info-label {
+  font-size: 24rpx;
+  color: #999999;
+  flex-shrink: 0;
+}
+.info-value {
+  font-size: 26rpx;
+  color: #333333;
+  text-align: right;
+  margin-left: 20rpx;
+}
+.info-value.price {
+  color: #FF6B00;
+  font-weight: 600;
+  font-size: 28rpx;
+}
+
+/* 弹窗 */
+.popup-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 100;
+}
+.popup-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #FFFFFF;
+  border-radius: 24rpx 24rpx 0 0;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  z-index: 101;
+  transform: translateY(100%);
+  transition: transform 0.3s;
+}
+.popup-sheet.show {
+  transform: translateY(0);
+}
+.popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32rpx 32rpx 16rpx;
+  border-bottom: 1rpx solid #F0F0F0;
+}
+.popup-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #000000;
+}
+.popup-close {
+  font-size: 36rpx;
+  color: #999999;
+  padding: 8rpx;
+}
+.popup-body {
+  flex: 1;
+  padding: 24rpx 32rpx;
+  overflow-y: auto;
+}
+.detail-section {
+  margin-bottom: 24rpx;
+}
+.detail-label {
+  font-size: 24rpx;
+  color: #999999;
+  margin-bottom: 8rpx;
+}
+.detail-value {
+  font-size: 28rpx;
+  color: #333333;
+}
+.detail-value.price {
+  color: #FF6B00;
+  font-weight: 700;
+  font-size: 36rpx;
+}
+.image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 8rpx;
+}
+.proof-image {
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 8rpx;
+  background: #F5F5F5;
+}
+.amount-input-row {
+  display: flex;
+  align-items: center;
+  background: #FFFFFF;
+  border: 2rpx solid #E0E0E0;
+  border-radius: 8rpx;
+  padding: 16rpx;
+  margin-top: 8rpx;
+}
+.amount-symbol {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #FF6B00;
+  margin-right: 12rpx;
+}
+.amount-input {
+  flex: 1;
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #FF6B00;
+}
+.reject-input {
+  width: 100%;
+  min-height: 120rpx;
+  background: #FFFFFF;
+  border: 2rpx solid #E0E0E0;
+  border-radius: 8rpx;
+  padding: 16rpx;
+  font-size: 26rpx;
+  box-sizing: border-box;
+  margin-top: 8rpx;
+}
+.popup-actions {
+  display: flex;
+  gap: 20rpx;
+  padding: 24rpx 32rpx 32rpx;
+  border-top: 1rpx solid #F0F0F0;
+}
+.action-btn {
+  flex: 1;
+  height: 88rpx;
+  border-radius: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.action-btn text {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+.action-btn.reject {
+  background: #F5F5F5;
+  border: 2rpx solid #E0E0E0;
+}
+.action-btn.reject text {
+  color: #666666;
+}
+.action-btn.approve {
+  background: #4CAF50;
+}
+.action-btn.approve text {
+  color: #FFFFFF;
+}
+
+/* 通用 */
+.load-more, .empty-state {
+  text-align: center;
+  padding: 40rpx 0;
+  font-size: 26rpx;
+  color: #999999;
+}
+.bottom-placeholder {
+  height: 120rpx;
+}
+</style>

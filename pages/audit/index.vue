@@ -13,8 +13,8 @@
     </view>
   </view>
 
-  <!-- 二级状态 tabs（computed 切认证/帖子的 status 列表） -->
-  <view class="status-tabs" v-if="currentTab !== 2">
+  <!-- 二级状态 tabs（仅认证/帖子 tab 显示） -->
+  <view class="status-tabs" v-if="currentTab < 2">
     <view
       v-for="tab in currentStatusTabs"
       :key="tab.key"
@@ -29,8 +29,8 @@
     </view>
   </view>
 
-  <!-- 搜索框（共享 input，placeholder 动态切） -->
-  <view class="search-bar" v-if="currentTab !== 2">
+  <!-- 搜索框（仅认证/帖子 tab 显示） -->
+  <view class="search-bar" v-if="currentTab < 2">
     <input
       class="search-input"
       v-model="searchKeyword"
@@ -208,6 +208,82 @@
     </view>
   </scroll-view>
 
+  <!-- 列表：退款审核 -->
+  <scroll-view
+    v-else-if="currentTab === 3"
+    class="audit-list"
+    scroll-y
+    @scrolltolower="loadMoreRefunds"
+  >
+    <view class="status-tabs refund-subtabs">
+      <view
+        v-for="t in refundStatusTabs"
+        :key="t.key"
+        class="status-tab"
+        :class="{ active: refundStatusTab === t.key }"
+        @tap="switchRefundTab(t.key)"
+      >
+        <text class="status-tab-text">{{ t.label }}</text>
+        <view class="tab-badge" v-if="t.count > 0">
+          <text>{{ t.count > 99 ? '99+' : t.count }}</text>
+        </view>
+      </view>
+    </view>
+
+    <view
+      v-for="(r, idx) in refunds"
+      :key="r._id || idx"
+      class="audit-card"
+      @tap="openRefundDetail(r)"
+    >
+      <view class="card-header">
+        <text class="card-title">订单 {{ r.orderNo || r.orderId || '-' }}</text>
+        <view class="status-chip" :style="getRefundStyle(r.status)">
+          <text>{{ refundStatusText(r.status) }}</text>
+        </view>
+      </view>
+      <view class="card-body">
+        <view class="info-row">
+          <text class="info-label">类型</text>
+          <text class="info-value">{{ refundTypeText(r.type) }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">用户</text>
+          <text class="info-value">{{ (r.user && (r.user.nickname || r.user.phone)) || '匿名' }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">金额</text>
+          <text class="info-value price">¥{{ (r.order && r.order.totalAmount) || r.refundAmount || 0 }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">原因</text>
+          <text class="info-value ellipsis-2">{{ r.reason || '-' }}</text>
+        </view>
+        <view class="info-row" v-if="r.images && r.images.length">
+          <text class="info-label">凭证</text>
+          <text class="info-value">{{ r.images.length }} 张图片</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">提交时间</text>
+          <text class="info-value">{{ formatTime(r.createdAt) }}</text>
+        </view>
+        <view class="info-row reject-reason" v-if="r.status === 'rejected' && r.rejectReason">
+          <text class="info-label">拒绝原因</text>
+          <text class="info-value">{{ r.rejectReason }}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="load-more" v-if="refunds.length > 0 && refundLoading">
+      <text>加载中…</text>
+    </view>
+
+    <view class="empty-state" v-if="refunds.length === 0 && !refundLoading">
+      <text class="empty-icon">💸</text>
+      <text class="empty-text">暂无退款申请</text>
+    </view>
+  </scroll-view>
+
   <!-- 详情弹窗（外壳共用，内部 v-if 切两套 body / footer） -->
   <view v-if="showDetail" class="popup-mask" @tap="closeDetail">
     <view class="popup-content" @tap.stop>
@@ -376,11 +452,107 @@
       </view>
     </view>
   </view>
+
+  <!-- 退款详情弹窗(独立 popup,跟认证/帖子 popup 互不干扰) -->
+  <view v-if="refundDetail" class="popup-mask" @tap="closeRefundDetail">
+    <view class="popup-content" @tap.stop>
+      <view class="popup-header">
+        <text class="popup-title">退款详情</text>
+        <text class="popup-close" @tap="closeRefundDetail">✕</text>
+      </view>
+
+      <scroll-view class="popup-body" scroll-y>
+        <view class="detail-section">
+          <view class="detail-row">
+            <text class="detail-label">订单号</text>
+            <text class="detail-value">{{ refundDetail.orderNo || refundDetail.orderId || '-' }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">类型</text>
+            <text class="detail-value">{{ refundTypeText(refundDetail.type) }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">用户</text>
+            <text class="detail-value">
+              {{ (refundDetail.user && refundDetail.user.nickname) || '匿名' }}
+              <text v-if="refundDetail.user && refundDetail.user.phone"> {{ refundDetail.user.phone }}</text>
+            </text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">金额</text>
+            <text class="detail-value price">¥{{ (refundDetail.order && refundDetail.order.totalAmount) || refundDetail.refundAmount || 0 }}</text>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">状态</text>
+            <view class="status-chip" :style="getRefundStyle(refundDetail.status)">
+              <text>{{ refundStatusText(refundDetail.status) }}</text>
+            </view>
+          </view>
+          <view class="detail-row">
+            <text class="detail-label">提交时间</text>
+            <text class="detail-value">{{ formatTime(refundDetail.createdAt) }}</text>
+          </view>
+          <view class="detail-row" v-if="refundDetail.processedAt">
+            <text class="detail-label">处理时间</text>
+            <text class="detail-value">{{ formatTime(refundDetail.processedAt) }}</text>
+          </view>
+        </view>
+
+        <view class="detail-section">
+          <text class="section-title">退款理由</text>
+          <text class="post-content-full">{{ refundDetail.reason || '（用户未填写）' }}</text>
+        </view>
+
+        <view class="detail-section" v-if="refundDetail.images && refundDetail.images.length">
+          <text class="section-title">图片凭证（{{ refundDetail.images.length }}）</text>
+          <view class="image-grid">
+            <image
+              v-for="(img, ii) in refundDetail.images"
+              :key="ii"
+              :src="img"
+              mode="aspectFill"
+              class="grid-img"
+              @tap="previewImage(img)"
+              @error="(e) => console.error('[audit/refund] image load failed', img, e)"
+            />
+          </view>
+        </view>
+
+        <view class="detail-section" v-if="refundDetail.status === 'rejected' && refundDetail.rejectReason">
+          <text class="section-title">拒绝原因</text>
+          <text class="reject-text">{{ refundDetail.rejectReason }}</text>
+        </view>
+
+        <view v-if="refundDetail.status === 'pending'" class="action-section">
+          <text class="action-label">拒绝原因（选填，拒绝后将显示给用户）</text>
+          <textarea
+            class="reject-input"
+            v-model="refundRejectReason"
+            placeholder="请输入拒绝原因，留空则使用默认原因"
+            maxlength="200"
+            auto-height
+          />
+        </view>
+      </scroll-view>
+
+      <view v-if="refundDetail.status === 'pending'" class="popup-footer">
+        <view class="btn btn-reject" @tap="confirmRefundAction('reject')">
+          <text>拒绝</text>
+        </view>
+        <view class="btn btn-approve" @tap="confirmRefundAction('approve')">
+          <text>通过</text>
+        </view>
+      </view>
+      <view v-else class="popup-footer">
+        <text class="footer-hint">已处理的退款无法再次操作</text>
+      </view>
+    </view>
+  </view>
 </view>
 </template>
 
 <script>
-import { listCertifications, reviewCert, listAllPosts, operatePost, listNeighborCategories, createNeighborCategory, updateNeighborCategory, deleteNeighborCategory } from '@/utils/api.js'
+import { listCertifications, reviewCert, listAllPosts, operatePost, listNeighborCategories, createNeighborCategory, updateNeighborCategory, deleteNeighborCategory, listRefunds, processRefund } from '@/utils/api.js'
 
 const STATUS_STYLE = {
   pending:   { text: '审核中', color: '#FF8800', bg: '#FFF3E0' },
@@ -394,11 +566,24 @@ const POST_STATUS_STYLE = {
   deleted: { text: '已删除', color: '#999999', bg: '#F5F5F5' }
 }
 
+const REFUND_STATUS_STYLE = {
+  pending:   { text: '待审核', color: '#FF8800', bg: '#FFF3E0' },
+  approved:  { text: '已通过', color: '#4F9A42', bg: '#E8F5E9' },
+  rejected:  { text: '已拒绝', color: '#FF4444', bg: '#FFEEEE' }
+}
+
+const REFUND_TYPE_TEXT = {
+  return_refund: '退货退款',
+  refund_only:   '仅退款',
+  exchange:      '我要换货'
+}
+
 export default {
   data() {
     return {
       STATUS_STYLE,
       POST_STATUS_STYLE,
+      REFUND_STATUS_STYLE,
       currentTab: 0,
       currentStatus: 'all',
       searchKeyword: '',
@@ -406,7 +591,7 @@ export default {
       noMore: false,
       page: 1,
       pageSize: 20,
-      mainTabs: ['认证审核', '帖子管理', '分类管理'],
+      mainTabs: ['认证审核', '帖子管理', '分类管理', '退款审核'],
       certList: [],
       postList: [],
       categoryList: [],
@@ -428,7 +613,19 @@ export default {
         { key: 'active',  label: '展示中', count: 0 },
         { key: 'closed',  label: '已下架', count: 0 },
         { key: 'deleted', label: '已删除', count: 0 }
-      ]
+      ],
+      // 退款审核
+      refunds: [],
+      refundStatusTab: 'pending',
+      refundStatusTabs: [
+        { key: 'all',      label: '全部',   count: 0 },
+        { key: 'pending',  label: '待审核', count: 0 },
+        { key: 'approved', label: '已通过', count: 0 },
+        { key: 'rejected', label: '已拒绝', count: 0 }
+      ],
+      refundDetail: null,
+      refundRejectReason: '',
+      refundLoading: false
     }
   },
   computed: {
@@ -442,6 +639,10 @@ export default {
   onLoad() {
     this.loadList()
   },
+  onShow() {
+    // 退款 tab 当前在 active 时,每次进入页面都拉一次,确保新提交的能及时看到
+    if (this.currentTab === 3) this.loadRefunds()
+  },
   onPullDownRefresh() {
     this.page = 1
     this.noMore = false
@@ -449,6 +650,8 @@ export default {
     else if (this.currentTab === 1) this.postList = []
     if (this.currentTab === 2) {
       this.loadCategoryList().finally(() => uni.stopPullDownRefresh())
+    } else if (this.currentTab === 3) {
+      this.loadRefunds().finally(() => uni.stopPullDownRefresh())
     } else {
       this.loadList().finally(() => uni.stopPullDownRefresh())
     }
@@ -459,6 +662,15 @@ export default {
     },
     getPostStyle(s) {
       return POST_STATUS_STYLE[s] || { text: s || '-', color: '#666', bg: '#F5F5F5' }
+    },
+    getRefundStyle(s) {
+      return REFUND_STATUS_STYLE[s] || { text: s || '-', color: '#666', bg: '#F5F5F5' }
+    },
+    refundStatusText(s) {
+      return (REFUND_STATUS_STYLE[s] && REFUND_STATUS_STYLE[s].text) || s || '-'
+    },
+    refundTypeText(t) {
+      return REFUND_TYPE_TEXT[t] || '退货退款'
     },
     formatTime(t) {
       if (!t) return '-'
@@ -496,7 +708,9 @@ export default {
       this.certList = []
       this.postList = []
       this.closeDetail()
+      this.closeRefundDetail()
       if (i === 2) this.loadCategoryList()
+      else if (i === 3) this.loadRefunds()
       else this.loadList()
     },
     switchStatus(k) {
@@ -687,6 +901,64 @@ export default {
       } catch (e) {
         uni.hideLoading()
         uni.showToast({ title: e.msg || `${label}失败`, icon: 'none' })
+      }
+    },
+
+    // ==================== 退款审核 ====================
+    async loadRefunds() {
+      this.refundLoading = true
+      try {
+        const res = await listRefunds(this.refundStatusTab)
+        this.refunds = res.data || []
+      } catch (e) {
+        console.error('[audit/refund] load failed:', e)
+        uni.showToast({ title: e.msg || '加载退款失败', icon: 'none' })
+        this.refunds = []
+      } finally {
+        this.refundLoading = false
+      }
+    },
+    loadMoreRefunds() {
+      // 当前是简单全量拉取,没有分页;scrolltolower 暂不触发拉新
+    },
+    switchRefundTab(k) {
+      if (this.refundStatusTab === k) return
+      this.refundStatusTab = k
+      this.loadRefunds()
+    },
+    openRefundDetail(r) {
+      this.refundDetail = r
+      this.refundRejectReason = ''
+    },
+    closeRefundDetail() {
+      this.refundDetail = null
+      this.refundRejectReason = ''
+    },
+    async confirmRefundAction(action) {
+      if (!this.refundDetail || !this.refundDetail._id) return
+      const isApprove = action === 'approve'
+      const actionText = isApprove ? '通过' : '拒绝'
+      const confirmed = await new Promise(resolve => {
+        uni.showModal({
+          title: `确认${actionText}`,
+          content: isApprove
+            ? '通过后该退款申请会标记为已通过(换货类型不会修改订单状态)'
+            : (this.refundRejectReason || '将使用默认原因'),
+          success: r => resolve(r.confirm)
+        })
+      })
+      if (!confirmed) return
+      try {
+        uni.showLoading({ title: '处理中…' })
+        // processRefund 期望 id 是订单的 _id(也就是 refund.orderId 字段),不是退款记录自己的 _id
+        await processRefund(this.refundDetail.orderId, action, 0, this.refundRejectReason)
+        uni.hideLoading()
+        uni.showToast({ title: `${actionText}成功`, icon: 'success' })
+        this.closeRefundDetail()
+        this.loadRefunds()
+      } catch (e) {
+        uni.hideLoading()
+        uni.showToast({ title: e.msg || `${actionText}失败`, icon: 'none' })
       }
     },
 
@@ -1211,8 +1483,9 @@ export default {
 }
 .reject-input {
   width: 100%;
-  height: 120rpx;
-  background: #F8F8F8;
+  min-height: 120rpx;
+  background: #FFFFFF;
+  border: 2rpx solid #E0E0E0;
   border-radius: 8rpx;
   padding: 16rpx;
   font-size: 26rpx;
@@ -1350,5 +1623,22 @@ export default {
 }
 .cat-btn-del text {
   color: #E63946;
+}
+
+/* ========== 退款审核 ========== */
+.refund-subtabs {
+  margin: 0 0 12rpx;
+}
+.ellipsis-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-all;
+}
+.info-value.price {
+  color: #FF4D4F;
+  font-weight: 600;
 }
 </style>

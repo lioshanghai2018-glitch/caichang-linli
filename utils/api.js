@@ -186,5 +186,15 @@ export const createNeighborCategory = (name, sort = 0) => request('createNeighbo
 export const updateNeighborCategory = (id, data) => request('updateNeighborCategory', { id, ...data })
 export const deleteNeighborCategory = (id) => request('deleteNeighborCategory', { id })
 
+// ==================== 退款审核（商家端）====================
+// status: 'all' | 'pending' | 'approved' | 'rejected'
+export const listRefunds = (status = 'all') => request('listRefunds', { status })
+export const processRefund = (id, action, refundAmount = 0, rejectReason = '') =>
+  request('processRefund', { id, action, refundAmount, rejectReason })
+
+// ==================== 文件上传（通过云函数中转，避免真机 OSS 域名白名单问题）====================
+export const uploadImageBase64 = (fileData, cloudPath) =>
+  request('uploadImageBase64', { fileData, cloudPath })
+
 // ==================== 默认导出：request ====================
 export default request

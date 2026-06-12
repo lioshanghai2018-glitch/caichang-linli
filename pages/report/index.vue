@@ -21,9 +21,9 @@
     </view>
   </view>
 
-  <!-- 核心数据4卡片 -->
+  <!-- 核心数据4卡片 (2x2 网格) -->
   <view class="dashboard-grid">
-    <view class="dash-card" v-for="(item, idx) in dashboardData" :key="idx">
+    <view class="dash-card" v-for="(item, idx) in dashboardCards" :key="idx">
       <view class="dash-icon-wrap" :style="{background: item.iconBg}">
         <text class="dash-icon">{{item.icon}}</text>
       </view>
@@ -41,7 +41,7 @@
       <text class="card-title">销售趋势</text>
       <text class="period-text">{{currentTimeText}}</text>
     </view>
-    <view class="line-chart">
+    <view class="line-chart" v-if="chartPoints.length > 0">
       <view class="chart-canvas">
         <view class="chart-grid">
           <view class="grid-line" v-for="n in 4" :key="n"></view>
@@ -49,7 +49,7 @@
         <view class="chart-line">
           <view
             class="chart-point"
-            v-for="(point, idx) in chartData"
+            v-for="(point, idx) in chartPoints"
             :key="idx"
             :style="{left: point.x + '%', bottom: point.y + '%'}"
           >
@@ -64,37 +64,36 @@
         <text v-for="(label, idx) in chartLabels" :key="idx">{{label}}</text>
       </view>
     </view>
+    <view class="empty-tip" v-else>
+      <text>暂无销售数据</text>
+    </view>
   </view>
 
   <!-- 商品销售排行 -->
   <view class="card ranking-card">
     <text class="card-title">商品销售排行</text>
-    <view class="ranking-list">
+    <view class="ranking-list" v-if="rankingList.length > 0">
       <view class="ranking-item" v-for="(item, idx) in rankingList" :key="idx">
         <view class="rank-num" :class="{top: idx < 3}">
           <text>{{idx + 1}}</text>
         </view>
         <view class="rank-info">
           <text class="rank-name">{{item.name}}</text>
-          <text class="rank-sales">销量 {{item.sales}}件</text>
+          <text class="rank-sales">销量 {{item.qty}}件</text>
         </view>
         <text class="rank-amount">¥{{item.amount}}</text>
       </view>
+    </view>
+    <view class="empty-tip" v-else>
+      <text>暂无销售排行</text>
     </view>
   </view>
 
   <!-- 分类占比 -->
   <view class="card category-card">
     <text class="card-title">分类销售占比</text>
-    <view class="category-chart">
-      <view class="pie-chart">
-        <view
-          class="pie-slice"
-          v-for="(slice, idx) in categoryData"
-          :key="idx"
-          :style="{background: slice.color, transform: 'rotate(' + slice.rotate + 'deg)'}"
-        ></view>
-      </view>
+    <view class="category-chart" v-if="categoryData.length > 0">
+      <view class="pie-chart" :style="{background: pieGradient}"></view>
       <view class="category-legend">
         <view class="legend-item" v-for="(item, idx) in categoryData" :key="idx">
           <view class="legend-dot" :style="{background: item.color}"></view>
@@ -103,6 +102,9 @@
         </view>
       </view>
     </view>
+    <view class="empty-tip" v-else>
+      <text>暂无分类销售</text>
+    </view>
   </view>
 
   <view class="bottom-placeholder"></view>
@@ -110,55 +112,135 @@
 </template>
 
 <script>
+import { getDashboard, getReportData } from '@/utils/api.js'
+import { getMerchantId } from '@/utils/auth.js'
+
 export default {
   data() {
     return {
       currentTime: 'today',
       currentTimeText: '今日',
+      loading: false,
       timeTabs: [
         { key: 'today', label: '今日' },
         { key: 'week', label: '本周' },
         { key: 'month', label: '本月' }
       ],
-      dashboardData: [
-        { label: '总订单', value: '128单', trend: '12%', trendUp: true, icon: '📋', iconBg: '#E8F5E9' },
-        { label: '总销售额', value: '¥3,580', trend: '8%', trendUp: true, icon: '💰', iconBg: '#E8F5E9' },
-        { label: '总访客', value: '456人', trend: '15%', trendUp: true, icon: '👥', iconBg: '#E3F2FD' },
-        { label: '转化率', value: '28%', trend: '3%', trendUp: false, icon: '📈', iconBg: '#FFF3E0' }
-      ],
-      chartData: [
-        { x: 10, y: 40, value: '¥320' },
-        { x: 25, y: 55, value: '¥450' },
-        { x: 40, y: 35, value: '¥280' },
-        { x: 55, y: 70, value: '¥580' },
-        { x: 70, y: 50, value: '¥420' },
-        { x: 85, y: 80, value: '¥680' }
-      ],
-      chartLabels: ['6:00', '9:00', '12:00', '15:00', '18:00', '21:00'],
-      rankingList: [
-        { name: '新鲜土猪肉 500g', sales: 86, amount: '3010.00' },
-        { name: '有机青菜 300g', sales: 65, amount: '578.50' },
-        { name: '野生菌汤包 200g', sales: 42, amount: '2856.00' },
-        { name: '新鲜鸡蛋 10枚', sales: 38, amount: '532.00' },
-        { name: '农家大米 5kg', sales: 25, amount: '800.00' }
-      ],
-      categoryData: [
-        { name: '蔬菜', percent: 35, color: '#4CAF50', rotate: 0 },
-        { name: '肉类', percent: 28, color: '#FF6B00', rotate: 126 },
-        { name: '水产', percent: 18, color: '#2196F3', rotate: 234 },
-        { name: '蛋奶', percent: 12, color: '#9C27B0', rotate: 295 },
-        { name: '其他', percent: 7, color: '#607D8B', rotate: 323 }
-      ]
+      // 4 卡片：总订单 / 总销售额 / 总访客 / 转化率
+      todayOrders: 0,
+      totalSales: 0,
+      totalVisitors: 0,
+      conversionRate: 0,
+      // 销售趋势:{label, value}[]
+      salesTrend: [],
+      // 商品排行:{productId, name, qty, amount}[]
+      rankingList: [],
+      // 分类占比:{name, amount, qty, percent, color}[]
+      categoryData: []
     }
+  },
+  computed: {
+    // 4 卡片数据(2x2:总订单+总销售额 row1,总访客+转化率 row2)
+    dashboardCards() {
+      return [
+        { label: '总订单', value: this.todayOrders + '单', trend: '12%', trendUp: true, icon: '📋', iconBg: '#E8F5E9' },
+        { label: '总销售额', value: '¥' + this.formatMoney(this.totalSales), trend: '8%', trendUp: true, icon: '💰', iconBg: '#E8F5E9' },
+        { label: '总访客', value: this.totalVisitors + '人', trend: '15%', trendUp: true, icon: '👥', iconBg: '#E3F2FD' },
+        { label: '转化率', value: this.conversionRate + '%', trend: '3%', trendUp: false, icon: '📈', iconBg: '#FFF3E0' }
+      ]
+    },
+    // 折线图点位:把 salesTrend 的 value 映射到 0-100% 高度,X 轴均分
+    chartPoints() {
+      if (!this.salesTrend.length) return []
+      const max = Math.max(...this.salesTrend.map(d => Number(d.value) || 0), 1)
+      const step = this.salesTrend.length === 1 ? 0 : 100 / (this.salesTrend.length - 1)
+      return this.salesTrend.map((d, i) => {
+        const v = Number(d.value) || 0
+        return {
+          x: this.salesTrend.length === 1 ? 50 : (i * step),
+          y: Math.max(2, Math.round((v / max) * 95)),
+          value: '¥' + this.formatMoney(v)
+        }
+      })
+    },
+    // 折线图 X 轴标签(按时段密度智能抽稀,避免 24 个标签挤一起)
+    chartLabels() {
+      if (!this.salesTrend.length) return []
+      const n = this.salesTrend.length
+      // 控制显示 ≤ 7 个标签
+      if (n <= 7) return this.salesTrend.map(d => d.label)
+      const target = 7
+      const step = Math.max(1, Math.floor(n / target))
+      const labels = []
+      for (let i = 0; i < n; i += step) {
+        labels.push(this.salesTrend[i].label)
+      }
+      // 末点补一个
+      if (labels[labels.length - 1] !== this.salesTrend[n - 1].label) {
+        labels.push(this.salesTrend[n - 1].label)
+      }
+      return labels
+    },
+    // 饼图 conic-gradient:把 categoryData 的 percent 串成角度区间
+    pieGradient() {
+      if (!this.categoryData.length) return '#F5F5F5'
+      let acc = 0
+      const parts = this.categoryData.map(c => {
+        const start = acc
+        acc += Number(c.percent) || 0
+        return `${c.color} ${start}% ${acc}%`
+      })
+      return `conic-gradient(${parts.join(', ')})`
+    }
+  },
+  onShow() {
+    // 切回本页面时刷新(下单后回到报表要看新数据)
+    if (!this.loading) this.loadAll()
   },
   methods: {
     goBack() {
       uni.navigateBack()
     },
     switchTime(key) {
+      if (key === this.currentTime) return
       this.currentTime = key
       const texts = { today: '今日', week: '本周', month: '本月' }
       this.currentTimeText = texts[key]
+      this.loadAll()
+    },
+    async loadAll() {
+      const merchantId = getMerchantId()
+      if (!merchantId) {
+        // 单商家自动 bootstrap 会在 request 内完成;这里也容忍空 merchantId 让后端报错
+        console.warn('[report] merchantId 为空,数据可能为空')
+      }
+      this.loading = true
+      try {
+        const [dashRes, reportRes] = await Promise.all([
+          getDashboard(this.currentTime),
+          getReportData(this.currentTime)
+        ])
+        if (dashRes && dashRes.data) {
+          this.todayOrders = dashRes.data.todayOrders || 0
+          this.totalSales = dashRes.data.totalSales || 0
+          this.totalVisitors = dashRes.data.totalVisitors || 0
+          this.conversionRate = dashRes.data.conversionRate || 0
+        }
+        if (reportRes && reportRes.data) {
+          this.salesTrend = reportRes.data.salesTrend || []
+          this.rankingList = reportRes.data.productRanking || []
+          this.categoryData = reportRes.data.categoryShare || []
+        }
+      } catch (e) {
+        uni.showToast({ title: e.msg || '数据加载失败', icon: 'none' })
+      } finally {
+        this.loading = false
+      }
+    },
+    formatMoney(n) {
+      const v = Number(n) || 0
+      // 千位分隔,2 位小数
+      return v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
     }
   }
 }
@@ -217,7 +299,7 @@ export default {
   font-weight: 600;
 }
 
-/* 核心数据4卡片 */
+/* 核心数据4卡片 (2x2) */
 .dashboard-grid {
   display: flex;
   flex-wrap: wrap;
@@ -229,6 +311,7 @@ export default {
   background: #FFFFFF;
   border-radius: 16rpx;
   padding: 24rpx;
+  box-sizing: border-box;
 }
 .dash-icon-wrap {
   width: 64rpx;
@@ -301,6 +384,16 @@ export default {
   color: #999999;
 }
 
+/* 空态 */
+.empty-tip {
+  padding: 60rpx 0;
+  text-align: center;
+}
+.empty-tip text {
+  font-size: 26rpx;
+  color: #999999;
+}
+
 /* 折线图 */
 .line-chart {
   height: 300rpx;
@@ -329,8 +422,6 @@ export default {
   left: 0;
   right: 0;
   bottom: 40rpx;
-  display: flex;
-  align-items: flex-end;
 }
 .chart-point {
   position: absolute;
@@ -432,13 +523,6 @@ export default {
   width: 200rpx;
   height: 200rpx;
   border-radius: 50%;
-  background: conic-gradient(
-    #4CAF50 0deg 126deg,
-    #FF6B00 126deg 230.4deg,
-    #2196F3 230.4deg 295.2deg,
-    #9C27B0 295.2deg 320.4deg,
-    #607D8B 320.4deg 360deg
-  );
   margin-right: 24rpx;
   flex-shrink: 0;
 }

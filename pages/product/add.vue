@@ -35,7 +35,7 @@
       <text class="form-label">商品分类</text>
       <picker :value="categoryIndex" :range="categories" range-key="label" @change="onCategoryChange">
         <view class="picker-value">
-          <text>{{categories[categoryIndex].label}}</text>
+          <text>{{categories[categoryIndex] && categories[categoryIndex].label || '请添加分类'}}</text>
           <text class="picker-arrow">›</text>
         </view>
       </picker>
@@ -122,7 +122,7 @@
 </template>
 
 <script>
-import { createProduct, updateProduct, getProductDetail, getCategories } from '@/utils/api.js'
+import { createProduct, updateProduct, getProductDetail, getCategories, uploadImageBase64 } from '@/utils/api.js'
 import { toHttpsUrl } from '@/utils/cloud-file.js'
 
 export default {
@@ -182,16 +182,30 @@ export default {
           sizeType: ['compressed']
         })
       } catch (e) { return }
-      // 3. 逐张直传云存储
+      // 3. 逐张读 base64 → 云函数上传（绕过真机 OSS 域名白名单问题）
       uni.showLoading({ title: '上传中 0/' + img.tempFilePaths.length })
       let ok = 0, fail = 0
+      const fs = uni.getFileSystemManager()
       for (let i = 0; i < img.tempFilePaths.length; i++) {
         try {
+          const base64 = await new Promise((resolve, reject) => {
+            fs.readFile({
+              filePath: img.tempFilePaths[i],
+              encoding: 'base64',
+              success: (res) => resolve(res.data || res),
+              fail: reject
+            })
+          })
           const cloudPath = `merchant/product/${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}.jpg`
-          const r = await uniCloud.uploadFile({ cloudPath, filePath: img.tempFilePaths[i] })
-          this.productImages = [...this.productImages, r.fileID]
-          ok++
+          const res = await uploadImageBase64('data:image/jpeg;base64,' + base64, cloudPath)
+          if (res.data && res.data.fileID) {
+            this.productImages = [...this.productImages, res.data.fileID]
+            ok++
+          } else {
+            fail++
+          }
         } catch (e) {
+          console.error('上传失败:', e)
           fail++
         }
         uni.showLoading({ title: `上传中 ${ok + fail}/${img.tempFilePaths.length}` })

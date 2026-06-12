@@ -1,4 +1,4 @@
-<template>
+﻿<template>
 <view class="page">
   <!-- 顶部门店选择区 -->
   <view class="header">
@@ -35,7 +35,7 @@
   <!-- 核心数据4卡片 -->
   <view class="dashboard-grid">
     <view class="dash-row" v-for="(row, ri) in dashboardRows" :key="ri">
-      <view class="dash-card" v-for="(item, ci) in row" :key="ci">
+      <view class="dash-card" v-for="(item, ci) in row" :key="ci" @tap="onDashCardTap(item)">
         <view class="dash-icon-wrap" :style="{background: item.iconBg}">
           <view class="iconfont dash-icon" :class="item.iconClass"></view>
         </view>
@@ -69,7 +69,7 @@
     </view>
   </view>
 
-  <!-- 9宫格功能入口 -->
+  <!-- 功能入口 -->
   <view class="card function-grid">
     <view class="func-item" v-for="(item, idx) in functionEntries" :key="idx" @tap="goPage(item.page)">
       <view class="func-icon-wrap">
@@ -124,7 +124,8 @@ export default {
         { name: '团购特惠', iconClass: 'icon-tuangoutehui', page: '/pages/groupbuy/list' },
         { name: '客服消息', iconClass: 'icon-kefuxiaoxi', page: '/pages/service/list', badge: 0 },
         { name: '数据报表', iconClass: 'icon-shujubaobiao', page: '/pages/report/index' },
-        { name: '分类管理', iconClass: 'icon-shangpinguanli', page: '/pages/category/list' }
+        { name: '分类管理', iconClass: 'icon-shangpinguanli', page: '/pages/category/list' },
+        { name: '轮播图', iconClass: 'icon-tuangoutehui', page: '/pages/banner/list' }
       ]
     }
   },
@@ -177,6 +178,11 @@ export default {
     },
     goMessages() { uni.navigateTo({ url: '/pages/service/list' }) },
     goOrderByStatus(key) { uni.reLaunch({ url: `/pages/order/list?status=${key}` }) },
+    onDashCardTap(item) {
+      if (item.title === '待处理订单') {
+        uni.navigateTo({ url: '/pages/pending/index' })
+      }
+    },
     goPage(page) {
       if (!page) return
       const tabPages = ['/pages/order/list', '/pages/product/list']
@@ -460,7 +466,7 @@ export default {
   z-index: 1;
 }
 
-/* 9宫格功能入口 */
+/* 功能入口 */
 .function-grid {
   display: flex;
   flex-wrap: wrap;
