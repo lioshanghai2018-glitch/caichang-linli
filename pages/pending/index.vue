@@ -17,7 +17,7 @@
     </view>
 
     <view v-else class="order-list">
-      <view class="order-card" v-for="order in orders" :key="order._id" @click="showDetail(order)">
+      <view class="order-card" v-for="order in orders" :key="order._id" @click="toggleExpand(order)">
         <view class="order-header">
           <text class="order-no">{{ order.orderNo || order._id?.slice(-8).toUpperCase() }}</text>
           <text class="order-status">待取货</text>
@@ -34,11 +34,25 @@
           </view>
           <view class="info-row">
             <text class="info-label">商品</text>
-            <text class="info-value">{{ order.products?.length || 0 }} 件</text>
+            <text class="info-value">{{ totalQtyOf(order) }} 件
+              <text class="expand-arrow">{{ expandedId === order._id ? '▾' : '▸' }}</text>
+            </text>
           </view>
           <view class="info-row">
             <text class="info-label">金额</text>
             <text class="info-value price">¥{{ order.totalAmount }}</text>
+          </view>
+        </view>
+
+        <view v-if="expandedId === order._id" class="expand-panel" @tap.stop>
+          <view class="expand-title">商品清单({{ totalQtyOf(order) }} 件)</view>
+          <view class="expand-item" v-for="(it, i) in (order.items || order.products || [])" :key="i">
+            <image class="expand-thumb" :src="it.image" mode="aspectFill" />
+            <view class="expand-info">
+              <text class="expand-name">{{ it.name }}</text>
+              <text class="expand-spec" v-if="it.spec">{{ it.spec }}</text>
+            </view>
+            <text class="expand-qty">x{{ it.qty }}</text>
           </view>
         </view>
 
@@ -52,11 +66,25 @@
 
 <script setup>
 import { ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onShow, onHide } from '@dcloudio/uni-app'
 import riderApi from '../../api/rider'
 
 const orders = ref([])
+const prevOrderCount = ref(0)
+let refreshTimer = null
+
 const loading = ref(false)
+// 骑手端展开态:单选互斥(同 ID 再点收起),同用户端 order.expanded 语义
+const expandedId = ref(null)
+
+const totalQtyOf = (order) => {
+  const list = (order && (order.items || order.products)) || []
+  return list.reduce((s, it) => s + (Number(it && it.qty) || 0), 0)
+}
+
+const toggleExpand = (order) => {
+  expandedId.value = expandedId.value === order._id ? null : order._id
+}
 
 onShow(() => {
   const riderInfo = uni.getStorageSync('riderInfo')
@@ -65,6 +93,11 @@ onShow(() => {
     return
   }
   fetchOrders()
+  if (!refreshTimer) {
+    refreshTimer = setInterval(() => {
+      fetchOrders()
+    }, 300000)
+  }
 })
 
 const fetchOrders = async () => {
@@ -106,6 +139,10 @@ const fetchOrders = async () => {
     .then(res => {
       console.log('[rider/pending] getAvailableOrders response:', res)
       orders.value = res.data || []
+      if (orders.value.length > prevOrderCount.value && prevOrderCount.value > 0) {
+        playNewOrderSound()
+      }
+      prevOrderCount.value = orders.value.length
     })
     .catch(err => {
       console.error('[rider/pending] 获取订单失败:', err)
@@ -140,6 +177,25 @@ const confirmPickup = async (order) => {
     uni.showToast({ title: e.msg || '操作失败', icon: 'none' })
   }
 }
+
+const playNewOrderSound = () => {
+  try { uni.vibrateLong() } catch(e) {}
+  try {
+    const audio = uni.createInnerAudioContext()
+    audio.src = '/static/notify.wav'
+    audio.onCanplay = () => { audio.play() }
+    audio.onError = () => { audio.destroy() }
+  } catch(e) {}
+}
+
+
+onHide(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+})
+
 </script>
 
 <style scoped>
@@ -263,5 +319,60 @@ const confirmPickup = async (order) => {
   font-size: 26rpx;
   padding: 15rpx 40rpx;
   border-radius: 40rpx;
+}
+
+/* 商品件数 + 展开交互 */
+.expand-arrow {
+  font-size: 24rpx;
+  color: #999;
+  margin-left: 8rpx;
+}
+.expand-panel {
+  background: #FAFAFA;
+  border-radius: 12rpx;
+  padding: 16rpx;
+  margin-bottom: 20rpx;
+}
+.expand-title {
+  font-size: 24rpx;
+  color: #666;
+  margin-bottom: 12rpx;
+}
+.expand-item {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid #F0F0F0;
+}
+.expand-item:last-child { border-bottom: none; }
+.expand-thumb {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 8rpx;
+  margin-right: 12rpx;
+  background: #EEE;
+  flex-shrink: 0;
+}
+.expand-info { flex: 1; min-width: 0; }
+.expand-name {
+  font-size: 26rpx;
+  color: #333;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expand-spec {
+  font-size: 22rpx;
+  color: #999;
+  display: block;
+  margin-top: 4rpx;
+}
+.expand-qty {
+  font-size: 26rpx;
+  color: #FF6B00;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-left: 12rpx;
 }
 </style>
