@@ -44,7 +44,10 @@
 			<view class="order-card" v-for="order in currentOrders" :key="order._id || order.id" @tap="toggleDetail(order)">
 				<!-- 卡片头部 -->
 				<view class="order-header">
-					<text class="order-id" @tap.stop="copyOrderNo(order.id || order.orderNo)">订单号：{{getOrderIdTail(order)}}</text>
+					<view class="order-id-wrap">
+						<text class="order-id" @tap.stop="copyOrderNo(order.id || order.orderNo)">订单号：{{getOrderIdTail(order)}}</text>
+						<text v-if="order.status === 'refunding'" class="refund-pending-label">商家审核中</text>
+					</view>
 					<view class="order-status-tag">
 						<text>{{getStepLabel(order)}}</text>
 					</view>
@@ -90,6 +93,9 @@
 				<!-- 展开详情 -->
 				<view class="order-detail" v-if="order.expanded">
 					<view class="divider"></view>
+					<view class="product-summary">
+						<text class="summary-text">共 {{ totalQtyOf(order) }} 件商品</text>
+					</view>
 					<view class="detail-section">
 						<view class="info-row">
 							<text class="info-label">预计送达</text>
@@ -175,6 +181,9 @@
 				<!-- 展开详情 -->
 				<view class="order-detail" v-if="order.expanded">
 					<view class="divider"></view>
+					<view class="product-summary">
+						<text class="summary-text">共 {{ totalQtyOf(order) }} 件商品</text>
+					</view>
 					<view class="detail-section">
 						<view class="fee-row">
 							<text class="fee-label">支付方式</text>
@@ -207,14 +216,23 @@
 					</view>
 				</view>
 
+				<!-- 商家拒绝原因 -->
+				<view class="refund-reject-reason" v-if="order.refundStatus === 'rejected' && order.rejectReason">
+					<text class="reject-reason-label">拒绝原因：</text>
+					<text class="reject-reason-text">{{order.rejectReason}}</text>
+				</view>
+
 				<!-- 底部：售后提示 + 按钮 -->
 				<view class="order-footer">
-					<text class="service-tip-text">如有售后服务请联系门店</text>
+					<text class="service-tip-text">{{ isRefundLocked(order) ? '退款问题请联系客服' : '如有售后服务请联系门店' }}</text>
 					<view class="footer-btns">
-						<view class="btn-outline" @tap.stop="afterSale">
+						<view v-if="isRefundLocked(order)" class="btn-outline" @tap.stop="contactService">
+							<text>联系客服</text>
+						</view>
+						<view v-else class="btn-outline" @tap.stop="afterSale(order)">
 							<text>申请售后</text>
 						</view>
-						<view class="btn-solid" @tap.stop="reOrder">
+						<view class="btn-solid" @tap.stop="reOrder(order)">
 							<text>再来一单</text>
 						</view>
 					</view>
@@ -243,7 +261,7 @@ const LEGACY_TO_CANONICAL = {
   '已退款': ORDER_STATUS.REFUNDED
 }
 
-// 进行中：未结束
+// 进行中：配送中(未完成)的订单
 const ACTIVE_STATUSES = [
   ORDER_STATUS.PENDING_PAYMENT,
   ORDER_STATUS.PAID,
@@ -254,12 +272,13 @@ const ACTIVE_STATUSES = [
   'pending', 'confirmed', '待支付', '已接单', '配送中'
 ]
 
-// 已结束
+// 已结束:已完成 / 退款中 / 已退款 / 已取消
 const HISTORY_STATUSES = [
   ORDER_STATUS.COMPLETED,
   ORDER_STATUS.CANCELLED,
+  ORDER_STATUS.REFUNDING,
   ORDER_STATUS.REFUNDED,
-  '已完成', '已取消', '已退款'
+  '已完成', '已取消', '已退款', '退款中'
 ]
 
 // deliveryStatus 进行中子集
@@ -358,6 +377,8 @@ export default {
 				_id: o._id,
 				id: o._id,
 				status: o.status,
+				refundStatus: o.refundStatus,
+				rejectReason: o.rejectReason,
 				deliveryStatus: o.deliveryStatus,
 				deliveryType: o.deliveryType || 'self',
 				items: (o.items || []).map(it => ({
@@ -422,6 +443,12 @@ export default {
 		toggleDetail(order) {
 			order.expanded = !order.expanded
 		},
+		// 订单商品总件数:items 数组 qty 求和(不是 SKU 数)
+		// 老数据 / 不同写入路径可能只有 products 数组,两个都兜底
+		totalQtyOf(order) {
+			const list = (order && (order.items || order.products)) || []
+			return list.reduce((s, it) => s + (Number(it && it.qty) || 0), 0)
+		},
 		copyOrderNo(fullId) {
 			uni.setClipboardData({
 				data: fullId,
@@ -469,36 +496,48 @@ export default {
 		},
 		async afterSale(order) {
 			if (!await requireLogin()) return
-			uni.showModal({
-				title: '申请售后',
-				content: '请输入退款原因',
-				editable: true,
-				placeholderText: '商品损坏/不想买了等',
-				success: async (res) => {
-					if (res.confirm) {
-						const orderId = this.orderKey(order)
-						if (!orderId) {
-							uni.showToast({ title: '订单号缺失', icon: 'none' })
-							return
-						}
-						try {
-							const reason = res.content || '用户申请退款'
-							await this.callAPI('applyRefund', { orderNo: orderId, reason })
-							uni.showToast({ title: '退款申请已提交', icon: 'success' })
-							this.loadFromCloud()
-						} catch (e) {
-							console.error('申请售后失败:', e)
-							uni.showToast({ title: '申请失败', icon: 'none' })
-						}
-					}
-				}
-			})
+			const orderId = this.orderKey(order)
+			if (!orderId) {
+				return uni.showToast({ title: '订单号缺失', icon: 'none' })
+			}
+			// 把整单塞 storage,新页 onLoad 直接拿,避免再调一次 getOrderDetail
+			uni.setStorageSync('refundTargetOrder', order)
+			uni.navigateTo({ url: `/pages/refund/apply?orderId=${orderId}` })
 		},
-		reOrder() {
-			uni.showToast({ title: '再来一单功能开发中', icon: 'none' })
+		reOrder(order) {
+			if (!order || !order.items || order.items.length === 0) {
+				uni.showToast({ title: '该订单无可购商品', icon: 'none' })
+				return
+			}
+			// 映射成结算页期望的字段(参考 pages/checkout/index.vue:200-213)
+			const checkoutItems = order.items.map(it => ({
+				productId: it.productId || it.id || null,
+				id: it.id || it.productId || null,
+				name: it.name || '未知商品',
+				spec: it.spec || '',
+				image: it.image || '',
+				originalPrice: it.price || '0',
+				currentPrice: it.price || '0',
+				quantity: Number(it.qty) || 1,
+				selected: true
+			}))
+			uni.setStorageSync('checkoutItems', JSON.stringify(checkoutItems))
+			uni.showToast({ title: '已加入结算', icon: 'success' })
+			// 等 toast 出现再跳,避免被 navigate 立刻打断看不到
+			setTimeout(() => {
+				uni.navigateTo({ url: '/pages/checkout/index' })
+			}, 300)
 		},
 		isPendingStatus(order) {
 			return this.toCanonical(order.status) === ORDER_STATUS.PENDING_PAYMENT
+		},
+		// 退款锁定:refunding(审核中) / refunded(已退款) 都不能再申请售后,只能联系客服
+		isRefundLocked(order) {
+			const s = order && order.status
+			return s === 'refunding' || s === 'refunded' || (order && order.refundStatus === 'rejected')
+		},
+		contactService() {
+			uni.navigateTo({ url: '/pages/service/index' })
 		},
 		getStepIndex(order) {
 			const s = this.toCanonical(order.status)
@@ -568,10 +607,12 @@ export default {
 			return this.isSelfPickup(order) && this.toCanonical(order.status) === ORDER_STATUS.READY_FOR_PICKUP
 		},
 		getHistoryStatusLabel(order) {
-			return ORDER_STATUS_TEXT[this.toCanonical(order.status)] || order.status
+			if (order.refundStatus === 'rejected') return '商家已拒绝'
+				return ORDER_STATUS_TEXT[this.toCanonical(order.status)] || order.status
 		},
 		getHistoryStatusClass(order) {
-			if (this.toCanonical(order.status) === ORDER_STATUS.COMPLETED) return 'done'
+			if (order.refundStatus === 'rejected') return 'refund-rejected'
+				if (this.toCanonical(order.status) === ORDER_STATUS.COMPLETED) return 'done'
 			return 'cancelled'
 		},
 		deleteOrder(order) {
@@ -700,6 +741,19 @@ export default {
 	color: #333333;
 }
 
+.order-id-wrap {
+	display: flex;
+	align-items: center;
+	flex: 1;
+	min-width: 0;
+}
+.refund-pending-label {
+	font-size: 22rpx;
+	color: #999999;
+	margin-left: 12rpx;
+	flex-shrink: 0;
+}
+
 .order-status {
 	padding: 6rpx 16rpx;
 	border-radius: 8rpx;
@@ -734,6 +788,41 @@ export default {
 	font-size: 24rpx;
 	font-weight: 600;
 	color: #999;
+}
+
+.order-status.refund-rejected {
+	background-color: #FFEEEE;
+}
+
+.order-status.refund-rejected text {
+	font-size: 24rpx;
+	font-weight: 600;
+	color: #E63946;
+}
+
+/* 商家拒绝原因 */
+.refund-reject-reason {
+	display: flex;
+	align-items: flex-start;
+	background: #FFF8F6;
+	border-radius: 8rpx;
+	padding: 16rpx 20rpx;
+	margin-top: 16rpx;
+	border-left: 4rpx solid #E63946;
+}
+
+.reject-reason-label {
+	font-size: 24rpx;
+	color: #E63946;
+	font-weight: 600;
+	flex-shrink: 0;
+}
+
+.reject-reason-text {
+	font-size: 24rpx;
+	color: #666;
+	line-height: 1.5;
+	flex: 1;
 }
 
 .delete-btn {
@@ -772,6 +861,20 @@ export default {
 	font-size: 28rpx;
 	font-weight: 600;
 	color: #4f9a42;
+}
+
+/* 商品件数摘要(展开区顶部) */
+.product-summary {
+	padding: 8rpx 0 16rpx;
+	border-bottom: 1rpx solid #F0F0F0;
+	margin-bottom: 16rpx;
+}
+.summary-text {
+	font-size: 26rpx;
+	font-weight: 600;
+	color: #4F9A42;
+	text-align: right;
+	display: block;
 }
 
 /* 商品行 */

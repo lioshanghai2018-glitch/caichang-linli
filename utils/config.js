@@ -1,4 +1,4 @@
-// 4端统一 baseURL（注意：当前 uniCloud 空间 fc-mp- 老格式可用，新格式 mp- 暂未生效，临时用老格式）
+// 四端统一baseURL
 const BASE_URL = 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com'
 const CLOUD_OBJECT = '/merchant-api'
 const API_BASE = BASE_URL + CLOUD_OBJECT
@@ -39,10 +39,4 @@ const STORAGE_KEYS = {
   ADDRESS_SELECTED: 'selected_address_id'
 }
 
-export {
-  BASE_URL,
-  API_BASE,
-  ORDER_STATUS,
-  ORDER_STATUS_TEXT,
-  STORAGE_KEYS
-}
+export { BASE_URL, API_BASE, ORDER_STATUS, ORDER_STATUS_TEXT, STORAGE_KEYS }

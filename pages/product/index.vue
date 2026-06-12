@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <view class="page">
     <!-- 顶部导航 -->
     <view class="nav-bar">
@@ -57,7 +57,8 @@
 </template>
 
 <script>
-import { addToCart, getCartItems } from '@/utils/cart.js'
+import { addToCart, getLocalCart } from '@/utils/cart.js'
+import { getMerchantId, recordProductView } from '@/utils/auth.js'
 
 export default {
   data() {
@@ -80,6 +81,11 @@ export default {
     if (options.id) {
       this.productId = options.id
       this.loadProduct()
+      // 商品浏览埋点:用于商家报表「总访客 / 转化率」统计
+      // 单商家场景下 merchantId 从 autoLogin 缓存拿,失败也忽略
+      getMerchantId().then(mid => {
+        if (mid) recordProductView(mid, this.productId)
+      })
     }
   },
   methods: {
@@ -87,7 +93,7 @@ export default {
       uni.navigateBack()
     },
     loadProduct() {
-      const allProducts = getCartItems()
+      const allProducts = getLocalCart()
       const found = allProducts.find(p => p.id == this.productId)
       if (found) {
         this.product = { ...found }

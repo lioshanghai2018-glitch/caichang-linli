@@ -1,5 +1,6 @@
 // 用户端鉴权工具
 import { STORAGE_KEYS, API_BASE } from './config.js'
+import { request } from './request.js'
 
 function callCloud(method, params) {
   return new Promise((resolve, reject) => {
@@ -52,6 +53,32 @@ export function logout() {
   uni.removeStorageSync(STORAGE_KEYS.TOKEN)
   uni.removeStorageSync(STORAGE_KEYS.USER_ID)
   uni.removeStorageSync(STORAGE_KEYS.USER_INFO)
+  // 退出登录不清理 viewer_id:匿名访客标识只用于去重浏览量,跨会话稳定
+}
+
+// 匿名访客标识(无登录态时的稳定 ID,用于商品浏览埋点去重)
+// 第一次访问时生成,之后存 storage 不变,确保同设备多次访问只算一个访客
+export function getOrCreateViewerId() {
+  let vid = uni.getStorageSync('viewer_id')
+  if (!vid) {
+    // 简单的 uuid v4 风格:时间戳 + 随机 hex
+    vid = 'v_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10)
+    uni.setStorageSync('viewer_id', vid)
+  }
+  return vid
+}
+
+// 记录商品浏览(用户进入商品详情时调用,失败不抛错)
+// 同 viewerId + productId + 日期 走云端 _id 唯一约束去重,不会污染访客数
+export async function recordProductView(merchantId, productId) {
+  if (!merchantId || !productId) return
+  const viewerId = getOrCreateViewerId()
+  try {
+    await request('recordProductView', { merchantId, productId, viewerId })
+  } catch (e) {
+    // 静默失败:埋点是统计用途,失败不应影响商品详情加载
+    console.warn('[recordProductView] failed:', e && e.msg)
+  }
 }
 
 // 真实登录：uni-id 一键登录（需云端部署）

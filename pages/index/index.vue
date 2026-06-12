@@ -1,8 +1,8 @@
-<template>
+﻿<template>
   <view class="container">
     <!-- IP形象区域 -->
     <view class="ip-section">
-      <image class="ip-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/luobozai.png" mode="aspectFill"></image>
+      <image class="ip-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/luobozai.png" mode="widthFix"></image>
     </view>
 
     <!-- 卡片1：问候 + 买菜邻里 -->
@@ -47,7 +47,6 @@
                 <text class="product-name">{{item.name}}</text>
                 <text class="product-weight">{{item.weight}}</text>
                 <view class="price-row">
-                  <text class="original-price">{{item.originalPrice}}</text>
                   <text class="current-price">{{item.currentPrice}}</text>
                   <view class="quantity-inline">
                     <view class="btn-minus" v-if="item.quantity > 0" @tap.stop="decreaseFromFlash(item)">
@@ -66,34 +65,30 @@
       </view>
     </view>
 
-    <!-- 卡片3：新鲜好菜 -->
-    <view class="card card-no-padding">
+    <!-- 卡片3：轮播图（云端管理） -->
+    <view class="card card-no-padding" v-if="banners.length > 0">
       <view class="group-section">
-        <swiper class="group-swiper" circular="true" @change="onSwiperChange">
-          <swiper-item>
-            <image class="group-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/shucailan.jpg" mode="aspectFill"></image>
-          </swiper-item>
-          <swiper-item>
-            <image class="group-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/shucailan.jpg" mode="aspectFill"></image>
+        <swiper class="group-swiper" circular="true" autoplay="true" interval="4000" @change="onSwiperChange">
+          <swiper-item v-for="(banner, idx) in banners" :key="idx">
+            <image class="group-image" :src="banner.image" mode="aspectFit" @tap="onBannerTap(banner)"></image>
           </swiper-item>
         </swiper>
-        <view class="swiper-indicators">
-          <view class="indicator" :class="{ active: currentSwiper === 0 }"></view>
-          <view class="indicator" :class="{ active: currentSwiper === 1 }"></view>
+        <view class="swiper-indicators" v-if="banners.length > 1">
+          <view class="indicator" v-for="(banner, idx) in banners" :key="idx" :class="{ active: currentSwiper === idx }"></view>
         </view>
       </view>
     </view>
 
     <!-- 品牌Logo区域 -->
     <view class="brand-section">
-      <image class="brand-logo" src="/static/images/logo.png" mode="aspectFit"></image>
+      <image class="brand-logo" src="/static/images/logo.png" mode="widthFix"></image>
     </view>
 
     <!-- 底部结算栏 -->
     <view class="checkout-bar" v-if="selectedCount > 0">
       <view class="checkout-left" @tap="goCart">
         <view class="checkout-cart-wrap">
-          <image class="checkout-cart-icon" src="/static/images/gouwuche.png" mode="aspectFit"></image>
+          <image class="checkout-cart-icon" src="/static/images/gouwuche.png" mode="widthFix"></image>
           <view class="checkout-cart-badge">
             <text>{{selectedCount}}</text>
           </view>
@@ -115,34 +110,27 @@
 <script>
   import { isLoggedIn, getMyUserInfo } from '@/utils/auth.js'
   import { STORAGE_KEYS } from '@/utils/config.js'
+  import { getLocalCart, addToCart as cartAdd, decreaseFromCart as cartDecrease, calcCartSummary } from '@/utils/cart.js'
+  import { API_BASE } from '@/utils/config.js'
 
   export default {
     data() {
       return {
         countdown: '02:59:59',
-
         vipLevel: 'V1',
         isLogin: false,
         userInfo: {},
-
         quickActions: [
-          {
-            title: '买菜',
-            subtitle: '提前下单 送菜上门'
-          },
-          {
-            title: '邻里',
-            subtitle: '免费发布 邻里互助'
-          }
+          { title: '买菜', subtitle: '提前下单 送菜上门' },
+          { title: '邻里', subtitle: '免费发布 邻里互动' }
         ],
-
         flashSaleLoading: false,
         flashSaleProducts: [],
         flashSaleEndTime: null,
         selectedCount: 0,
         selectedTotal: '0.00',
-
-        currentSwiper: 0
+        currentSwiper: 0,
+        banners: []
       }
     },
 
@@ -156,238 +144,211 @@
     onLoad() {
       this.startCountdown();
       this.loadFlashSaleProducts();
+      this.loadBanners();
+      this.updateCartInfo();
     },
 
-    onShow() {
-      this.syncAllCart();
-      this.loadUserInfo();
-    },
-
-    onUnload() {
-      if (this.countdownTimer) {
-        clearInterval(this.countdownTimer);
+    async onShow() {
+      this.isLogin = isLoggedIn()
+      if (this.isLogin) {
+        const cached = uni.getStorageSync(STORAGE_KEYS.USER_INFO)
+        if (cached && cached.nickname) this.userInfo = cached
+        try { this.userInfo = await getMyUserInfo() || this.userInfo } catch(e) {}
+        this.vipLevel = this.userInfo.vipLevel || 'V1'
+      } else {
+        this.userInfo = {}
       }
+      this.updateCartInfo()
+      this.syncProductQuantities()
     },
 
     methods: {
-      async loadFlashSaleProducts() {
-        this.flashSaleLoading = true;
+      async loadBanners() {
         try {
-          // 获取特惠活动信息
-          const saleRes = await uni.request({
-            url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSale',
+          const res = await uni.request({
+            url: API_BASE + '/getBanners',
             method: 'POST',
-            data: { method: 'getFlashSale', params: {} }
-          });
-
-          // getFlashSale 返回的是数组（按 startTime desc），筛选当前进行中的活动
-          if (saleRes.data?.code === 0 && saleRes.data.data) {
-            const saleList = Array.isArray(saleRes.data.data) ? saleRes.data.data : [saleRes.data.data];
-            const now = Date.now();
-            // 优先选进行中的（status=true && startTime<=now<endTime），否则取第一个未结束的
-            const activeSale = saleList.find(s => s.status === true && s.startTime <= now && s.endTime > now)
-              || saleList.find(s => s.status === true && s.endTime > now)
-              || null;
-
-            if (activeSale) {
-              this.flashSaleEndTime = activeSale.endTime;
-              this.startCountdown();
-
-              // 获取特惠商品列表（按 flashSaleId 过滤）
-              const productRes = await uni.request({
-                url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSaleProducts',
-                method: 'POST',
-                data: { method: 'getFlashSaleProducts', params: { flashSaleId: activeSale._id } }
-              });
-
-              if (productRes.data?.code === 0) {
-                this.flashSaleProducts = productRes.data.data.map(item => ({
-                  id: item._id,
-                  name: item.name,
-                  image: item.image || '/static/images/placeholder.png',
-                  weight: item.specs?.[0]?.name || '',
-                  originalPrice: '¥' + item.originalPrice,
-                  currentPrice: '¥' + item.flashPrice,
-                  quantity: 0
-                }));
-              }
-              this.flashSaleLoading = false;
-              return;
-            }
+            data: { method: 'getBanners', params: {} }
+          })
+          if (res.data && res.data.code === 0) {
+            this.banners = res.data.data || []
           }
-          // 没有进行中的特惠活动
-          this.flashSaleProducts = [];
-          this.flashSaleEndTime = null;
-          if (this.countdownTimer) {
-            clearInterval(this.countdownTimer);
-          }
-          this.countdown = '00:00:00';
         } catch (e) {
-          console.error('加载限时特惠商品失败:', e);
-        } finally {
-          this.flashSaleLoading = false;
+          console.error('加载轮播图失败:', e)
         }
       },
 
-      startCountdown() {
-        if (this.countdownTimer) {
-          clearInterval(this.countdownTimer);
+      onBannerTap(banner) {
+        if (banner.linkType === 'product' && banner.linkId) {
+          uni.navigateTo({ url: '/pages/product/index?id=' + banner.linkId })
+        } else if (banner.linkType === 'category' && banner.linkId) {
+          uni.navigateTo({ url: '/pages/category/index?categoryId=' + banner.linkId })
         }
-        this.countdownTimer = setInterval(() => {
-          const now = Date.now();
-          const remaining = this.flashSaleEndTime - now;
-          if (remaining <= 0) {
-            this.countdown = '00:00:00';
-            this.loadFlashSaleProducts(); // 刷新商品列表
-            return;
-          }
-          const totalSeconds = Math.floor(remaining / 1000);
-          const hours = Math.floor(totalSeconds / 3600);
-          const minutes = Math.floor((totalSeconds % 3600) / 60);
-          const seconds = totalSeconds % 60;
-          this.countdown = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-        }, 1000);
       },
 
       onSwiperChange(e) {
-        this.currentSwiper = e.detail.current;
+        this.currentSwiper = e.detail.current
+      },
+
+      startCountdown() {
+        const now = new Date()
+        const end = new Date(now)
+        end.setHours(23, 59, 59, 999)
+        this.flashSaleEndTime = end.getTime()
+        this.tickCountdown()
+      },
+
+      tickCountdown() {
+        const diff = this.flashSaleEndTime - Date.now()
+        if (diff <= 0) { this.countdown = '00:00:00'; return }
+        const h = String(Math.floor(diff / 3600000)).padStart(2, '0')
+        const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0')
+        const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0')
+        this.countdown = h + ':' + m + ':' + s
+        setTimeout(() => this.tickCountdown(), 1000)
+      },
+
+      async loadFlashSaleProducts() {
+        this.flashSaleLoading = true
+        try {
+          const saleRes = await uni.request({
+            url: API_BASE + '/getFlashSale',
+            method: 'POST',
+            data: { method: 'getFlashSale', params: {} }
+          })
+          if (!(saleRes.data && saleRes.data.code === 0 && saleRes.data.data)) {
+            this.flashSaleProducts = []
+            this.flashSaleLoading = false
+            return
+          }
+          const saleList = Array.isArray(saleRes.data.data) ? saleRes.data.data : [saleRes.data.data]
+          const now = Date.now()
+          const today0 = new Date(); today0.setHours(0, 0, 0, 0)
+          const today0ms = today0.getTime()
+          const windowOf = (s) => {
+            if ((s.type || 'fixed') === 'daily' && s.dailyStart && s.dailyEnd) {
+              const dp = s.dailyStart.split(':'), ep = s.dailyEnd.split(':')
+              const sh = Number(dp[0]) || 0, sm = Number(dp[1]) || 0
+              const eh = Number(ep[0]) || 0, em = Number(ep[1]) || 0
+              return { start: today0ms + sh * 3600000 + sm * 60000, end: today0ms + eh * 3600000 + em * 60000 }
+            }
+            return { start: s.startTime, end: s.endTime }
+          }
+          const enriched = saleList.map(s => ({ ...s, ...windowOf(s) }))
+          const activeSale = enriched.find(s => s.status === true && s.start <= now && s.end > now)
+            || enriched.find(s => s.status === true && s.end > now)
+            || null
+          if (!activeSale) {
+            this.flashSaleProducts = []
+            this.flashSaleLoading = false
+            return
+          }
+          const productRes = await uni.request({
+            url: API_BASE + '/getFlashSaleProducts',
+            method: 'POST',
+            data: { method: 'getFlashSaleProducts', params: { flashSaleId: activeSale._id } }
+          })
+          if (productRes.data && productRes.data.code === 0) {
+            const cart = getLocalCart()
+            this.flashSaleProducts = (productRes.data.data || []).map(p => {
+              const firstSpec = p.specs && p.specs[0] ? p.specs[0] : null
+              const cartItem = cart.find(c => c.id === p._id)
+              return {
+                id: p._id,
+                name: p.name,
+                weight: firstSpec ? (firstSpec.name || '') : '',
+                image: p.image || p.coverImage || '/static/images/placeholder.png',
+                originalPrice: p.originalPrice ? String.fromCharCode(165) + p.originalPrice : '',
+                currentPrice: p.flashPrice ? String.fromCharCode(165) + p.flashPrice : (p.price ? String.fromCharCode(165) + p.price : ''),
+                quantity: cartItem ? cartItem.quantity : 0,
+                product: Object.assign({}, p, { price: p.flashPrice || p.price || 0 })
+              }
+            })
+          }
+        } catch (e) {
+          console.error(String.fromCharCode(21152) + String.fromCharCode(36733) + String.fromCharCode(22242) + String.fromCharCode(36141) + String.fromCharCode(21830) + String.fromCharCode(21697) + String.fromCharCode(22833) + String.fromCharCode(36133) + ': ', e)
+        }
+        this.flashSaleLoading = false
+
       },
 
       addToCart(item) {
-        const idx = this.flashSaleProducts.findIndex(p => p.id === item.id);
-        if (idx < 0) return;
-        this.flashSaleProducts[idx].quantity++;
-        this.saveFlashSaleToCart();
+        cartAdd(item)
+        item.quantity++
+        this.updateCartInfo()
       },
 
-      decreaseFromFlash(product) {
-        const idx = this.flashSaleProducts.findIndex(p => p.id === product.id);
-        if (idx >= 0 && this.flashSaleProducts[idx].quantity > 0) {
-          this.flashSaleProducts[idx].quantity--;
-          this.saveFlashSaleToCart();
-        }
+      decreaseFromFlash(item) {
+        if (item.quantity <= 0) return
+        cartDecrease(item.id)
+        item.quantity--
+        this.updateCartInfo()
       },
 
-      saveFlashSaleToCart() {
-        // 从本地存储读取现有购物车
-        const raw = uni.getStorageSync("cartItems");
-        const cartItems = raw ? JSON.parse(raw) : [];
-        // 更新限时特惠商品（用 id 去重，name 可能重复）
-        this.flashSaleProducts.forEach(p => {
-          if (p.quantity > 0) {
-            const existIndex = cartItems.findIndex(c => c.id === p.id);
-            if (existIndex >= 0) {
-              cartItems[existIndex].quantity = p.quantity;
-            } else {
-              cartItems.push({
-                productId: p.id,
-                id: p.id,
-                name: p.name,
-                spec: p.weight,
-                image: p.image,
-                currentPrice: p.currentPrice,
-                originalPrice: p.originalPrice,
-                quantity: p.quantity,
-                selected: true
-              });
-            }
-          } else {
-            // 数量为0，从购物车移除
-            const existIndex = cartItems.findIndex(c => c.id === p.id);
-            if (existIndex >= 0) {
-              cartItems.splice(existIndex, 1);
-            }
-          }
-        });
-        uni.setStorageSync("cartItems", JSON.stringify(cartItems));
-        this.updateSelectedTotal();
+      updateCartInfo() {
+        const cart = getLocalCart()
+        const summary = calcCartSummary(cart)
+        this.selectedCount = summary.count
+        this.selectedTotal = summary.total
       },
 
-      updateSelectedTotal() {
-        const cartItems = uni.getStorageSync("cartItems") ? JSON.parse(uni.getStorageSync("cartItems")) : [];
-        let count = 0;
-        let total = 0;
-        cartItems.forEach(item => {
-          if (item.selected !== false) {
-            count += item.quantity || 0;
-            total += (item.quantity || 0) * parseFloat(item.currentPrice.replace('¥', '') || 0);
-          }
-        });
-        this.selectedCount = count;
-        this.selectedTotal = total.toFixed(2);
-      },
-
-      syncAllCart() {
-        const cartItems = uni.getStorageSync("cartItems") ? JSON.parse(uni.getStorageSync("cartItems")) : [];
-        this.flashSaleProducts.forEach(p => {
-          const cartItem = cartItems.find(c => c.id === p.id);
-          p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
-        });
-        this.updateSelectedTotal();
-      },
-
-      onViewMore() {
-        uni.navigateTo({ url: '/pages/category/index' })
-      },
-
-      goMine() {
-        if (!isLoggedIn()) {
-          uni.navigateTo({ url: '/pages/login/index' })
-          return
-        }
-        uni.switchTab({ url: '/pages/mine/index' })
-      },
-
-      async loadUserInfo() {
-        this.isLogin = isLoggedIn()
-        if (!this.isLogin) {
-          this.userInfo = {}
-          return
-        }
-        try {
-          const fresh = await getMyUserInfo()
-          if (fresh) this.userInfo = fresh
-          else this.userInfo = uni.getStorageSync(STORAGE_KEYS.USER_INFO) || {}
-        } catch (e) {
-          this.userInfo = uni.getStorageSync(STORAGE_KEYS.USER_INFO) || {}
-        }
-      },
-
-      goCategory() {
-        uni.switchTab({ url: '/pages/category/index' })
-      },
-
-      goNeighbor() {
-        uni.navigateTo({ url: '/pages/neighbor/index' })
-      },
-
-      goCart() {
-        uni.navigateTo({ url: '/pages/cart/index' })
-      },
-
+      goCategory() { uni.switchTab({ url: '/pages/category/index' }) },
+      goNeighbor() { uni.navigateTo({ url: '/pages/neighbor/index' }) },
+      goMine() { uni.switchTab({ url: '/pages/mine/index' }) },
+      goCart() { uni.navigateTo({ url: '/pages/cart/index' }) },
       goCheckout() {
-        uni.navigateTo({ url: '/pages/cart/index' })
-      }
+        const cart = getLocalCart()
+        if (cart.length === 0) { return }
+        const items = cart.map(c => {
+          const p = c.product || {}
+          return {
+            id: c.id,
+            name: p.name || "",
+            image: p.image || p.coverImage || "",
+            spec: (p.specs && p.specs[0] && p.specs[0].name) || "",
+            originalPrice: p.originalPrice || "",
+            currentPrice: p.price || p.flashPrice || "",
+            quantity: c.quantity,
+            qty: c.quantity
+          }
+        })
+        uni.setStorageSync("checkoutItems", JSON.stringify(items))
+        uni.navigateTo({ url: "/pages/checkout/index" })
+      },
+      onViewMore() { uni.switchTab({ url: '/pages/category/index' }) }
     }
   }
 </script>
 
 <style>
-/* 全局样式 */
+@import '/static/css/iconfont.css';
+
+page { background-color: #F5F1EB; }
+
 .container {
-  padding: 0 24rpx 12rpx;
+  padding: 0 24rpx 120rpx;
   background-color: #F5F1EB;
-  min-height: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
 }
 
-/* 卡片通用样式 */
+.ip-section {
+  margin: 0 -24rpx;
+  padding: 0;
+  overflow: hidden;
+}
+
+.ip-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
 .card {
   background-color: #FFFFFF;
   border-radius: 24rpx;
-  margin-top: 24rpx;
-  padding: 32rpx;
-  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.06);
-  overflow: hidden;
+  padding: 24rpx;
+  margin-top: 20rpx;
 }
 
 .card-no-padding {
@@ -395,73 +356,7 @@
   overflow: hidden;
 }
 
-/* 顶部品牌区 */
-.brand-section {
-  height: 208rpx;
-  padding: 32rpx;
-  display: flex;
-  align-items: center;
-}
-
-.brand-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.brand-name {
-  font-size: 32rpx;
-  font-weight: 500;
-  color: #2D5A27;
-  line-height: 44rpx;
-}
-
-.brand-subtitle {
-  font-size: 56rpx;
-  font-weight: 700;
-  color: #000000;
-  margin-top: 8rpx;
-}
-
-.brand-desc {
-  font-size: 24rpx;
-  color: #666666;
-  margin-top: 8rpx;
-}
-
-.shop-button {
-  width: 240rpx;
-  height: 64rpx;
-  background-color: #2D5A27;
-  color: #FFFFFF;
-  font-size: 28rpx;
-  border-radius: 16rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16rpx 32rpx;
-  margin-top: 16rpx;
-}
-
-/* IP形象区域 */
-.ip-section {
-  height: 450rpx;
-  margin: 0 -24rpx;
-}
-
-.ip-image {
-  width: 100%;
-  height: 450rpx;
-}
-
-.ip-placeholder text {
-  color: #999999;
-  font-size: 28rpx;
-}
-
-/* 问候模块 */
-.greeting-section {
-  cursor: pointer;
-}
+.greeting-section { padding: 8rpx 0; }
 
 .greeting-header {
   display: flex;
@@ -469,9 +364,9 @@
 }
 
 .greeting-text {
-  font-size: 32rpx;
-  font-weight: 400;
-  color: #333333;
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #2D5A27;
 }
 
 .vip-tag {
@@ -520,9 +415,7 @@
   margin-top: 8rpx;
 }
 
-/* 限时特惠模块 */
-.flash-sale-section {
-}
+.flash-sale-section {}
 
 .section-header {
   display: flex;
@@ -560,27 +453,23 @@
   white-space: nowrap;
 }
 
-.product-list {
-  display: flex;
-}
+.product-list { display: flex; }
 
 .product-card {
-  width: 220rpx;
+  width: 190rpx;
   flex-shrink: 0;
   margin-right: 16rpx;
-  overflow: hidden;
 }
 
 .product-image {
-  width: 220rpx;
-  height: 220rpx;
+  width: 190rpx;
+  height: 190rpx;
   border-radius: 16rpx;
   background-color: #f5f5f5;
 }
 
 .product-info {
   white-space: normal;
-  overflow: hidden;
 }
 
 .product-name {
@@ -614,18 +503,10 @@
   margin-top: 8rpx;
 }
 
-.original-price {
-  font-size: 22rpx;
-  font-weight: 400;
-  color: #999999;
-  text-decoration: line-through;
-}
-
 .current-price {
   font-size: 28rpx;
   font-weight: 700;
   color: #FF3333;
-  margin-left: 16rpx;
 }
 
 .quantity-inline {
@@ -651,7 +532,7 @@
 
 .btn-plus {
   background-color: #4F9A42;
-  border-radius: 8rpx;
+  border-radius: 50%;
 }
 
 .minus-icon {
@@ -668,6 +549,7 @@
   border-radius: 2rpx;
   position: relative;
 }
+
 .add-icon::after {
   content: '';
   position: absolute;
@@ -680,38 +562,19 @@
 }
 
 .quantity-num {
-  font-size: 26rpx;
+  font-size: 24rpx;
   color: #333333;
-  min-width: 40rpx;
+  min-width: 32rpx;
   text-align: center;
 }
 
-/* 团购模块 */
-.group-section {
-  position: relative;
-}
 
-.group-header {
-  display: flex;
-  flex-direction: column;
-}
 
-.group-title {
-  font-size: 40rpx;
-  font-weight: 700;
-  color: #000000;
-}
-
-.group-subtitle {
-  font-size: 24rpx;
-  color: #666666;
-  margin-top: 8rpx;
-}
+.group-section { position: relative; }
 
 .group-swiper {
   width: 100%;
   height: 380rpx;
-  margin-top: 0;
   overflow: hidden;
   font-size: 0;
   line-height: 0;
@@ -750,11 +613,8 @@ swiper-item {
   margin: 0 8rpx;
 }
 
-.indicator.active {
-  background-color: #2D5A27;
-}
+.indicator.active { background-color: #2D5A27; }
 
-/* 品牌Logo区域 */
 .brand-section {
   display: flex;
   flex-direction: column;
@@ -767,7 +627,6 @@ swiper-item {
   height: 96rpx;
 }
 
-/* 底部结算栏 */
 .checkout-bar {
   position: fixed;
   bottom: 100rpx;
@@ -783,10 +642,7 @@ swiper-item {
   z-index: 100;
 }
 
-.checkout-left {
-  display: flex;
-  align-items: center;
-}
+.checkout-left { display: flex; align-items: center; }
 
 .checkout-cart-wrap {
   position: relative;
@@ -798,10 +654,7 @@ swiper-item {
   margin-right: 16rpx;
 }
 
-.checkout-cart-icon {
-  width: 75rpx;
-  height: 75rpx;
-}
+.checkout-cart-icon { width: 75rpx; height: 75rpx; }
 
 .checkout-cart-badge {
   position: absolute;
@@ -817,32 +670,15 @@ swiper-item {
   padding: 0 6rpx;
 }
 
-.checkout-cart-badge text {
-  color: #FFFFFF;
-  font-size: 18rpx;
-}
+.checkout-cart-badge text { color: #FFFFFF; font-size: 18rpx; }
 
-.checkout-info {
-  display: flex;
-  flex-direction: column;
-}
+.checkout-info { display: flex; flex-direction: column; }
 
-.checkout-count {
-  font-size: 22rpx;
-  color: #999999;
-}
+.checkout-count { font-size: 22rpx; color: #999999; }
 
-.checkout-total {
-  font-size: 22rpx;
-  color: #333333;
-  margin-top: 4rpx;
-}
+.checkout-total { font-size: 22rpx; color: #333333; margin-top: 4rpx; }
 
-.checkout-price {
-  font-size: 28rpx;
-  font-weight: 700;
-  color: #4CAF50;
-}
+.checkout-price { font-size: 28rpx; font-weight: 700; color: #4CAF50; }
 
 .checkout-btn {
   background-color: #4f9a42;

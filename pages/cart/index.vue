@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <view class="page">
     <!-- 顶部导航 -->
     <view class="nav-bar">
@@ -77,7 +77,8 @@
 </template>
 
 <script>
-import { requireLogin } from '@/utils/auth.js'
+import { requireLogin, isLoggedIn, getUserId } from '@/utils/auth.js'
+import { getLocalCart, setLocalCart, removeFromCart as cartRemove, clearCart as cartClear, updateCartItemQuantity, calcCartSummary, initCart } from '@/utils/cart.js'
 
 export default {
   data() {
@@ -113,24 +114,35 @@ export default {
     goBack() {
       uni.navigateBack()
     },
-    loadCart() {
-      const cartData = uni.getStorageSync('cartItems')
-      if (cartData) {
-        try {
-          const parsed = typeof cartData === 'string' ? JSON.parse(cartData) : cartData
-          this.cartItems = Array.isArray(parsed) ? parsed : []
-        } catch (e) {
-          this.cartItems = []
-        }
-      } else {
-        this.cartItems = []
-      }
-    },
-    saveCart() {
-      uni.setStorageSync('cartItems', JSON.stringify(this.cartItems))
-    },
     toggleEdit() {
       this.isEdit = !this.isEdit
+    },
+    loadCart() {
+      const cart = getLocalCart()
+      this.cartItems = cart.map(c => {
+        const p = c.product || {}
+        return {
+          id: c.id,
+          name: p.name || "",
+          image: p.image || p.coverImage || "",
+          spec: (p.specs && p.specs[0] && p.specs[0].name) || "",
+          currentPrice: (p.price ? ("\u00A5" + p.price) : (p.flashPrice ? ("\u00A5" + p.flashPrice) : "\u00A50")),
+          quantity: c.quantity,
+          selected: true
+        }
+      })
+    },
+    saveCart() {
+      const items = this.cartItems.map(item => ({
+        id: item.id,
+        quantity: item.quantity,
+        product: {
+          name: item.name,
+          image: item.image,
+          price: parseFloat((item.currentPrice || "").replace(/[^0-9.]/g, "")) || 0
+        }
+      }))
+      setLocalCart(items)
     },
     toggleSelect(index) {
       // 切换：undefined/null/false → true, true → false

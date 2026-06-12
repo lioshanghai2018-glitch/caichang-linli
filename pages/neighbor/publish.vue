@@ -106,11 +106,12 @@ export default {
 		if (options.edit) {
 			this.isEdit = true
 			this.postId = options.edit
-			this.loadPostData()
 		}
 
-		// 加载分类列表(从云端拉,缓存或兜底)
-		this.loadCategories()
+		// 先加载分类,再加载帖子数据(编辑模式需要用分类名匹配 categoryIndex)
+		this.loadCategories().then(() => {
+			if (this.isEdit) this.loadPostData()
+		})
 	},
 	methods: {
 		async loadCategories() {
@@ -204,19 +205,18 @@ export default {
 			}
 
 			const postData = {
-				_id: 'post_' + Date.now(),
 				categoryIndex: (this.categories[this.form.categoryIndex] && this.categories[this.form.categoryIndex].index) || (this.form.categoryIndex + 1),
 				categoryName: this.form.categoryName,
 				content: this.form.content.trim(),
 				images: uploadedImages,
 				contactPhone: this.form.contactPhone,
-				price: this.form.price,
-				authorName: uni.getStorageSync('userName') || '邻居',
-				userId: getUserId(),
-				likes: 0,
-				comments: 0,
-				status: 1,
-				createdAt: new Date().toISOString()
+				price: this.form.price
+			}
+
+			// 创建模式补作者信息(编辑模式不要带 _id / userId / authorName,云端 updatePost 不接受)
+			if (!this.isEdit) {
+				postData.authorName = uni.getStorageSync('userName') || '邻居'
+				postData.userId = getUserId()
 			}
 
 			try {

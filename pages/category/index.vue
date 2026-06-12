@@ -1,11 +1,11 @@
-<template>
+﻿<template>
 	<view class="page">
 		<!-- 顶部搜索栏 -->
 		<view class="header">
 			<view class="header-row">
-				<view class="back-btn">
-					<text class="back-arrow">‹</text>
-				</view>
+
+
+
 				<view class="search-box">
 				<view class="search-icon-line"></view>
 				<input class="search-input" type="text" placeholder="搜索商品" placeholder-class="search-placeholder" />
@@ -110,6 +110,8 @@
 </template>
 
 <script>
+	import { getLocalCart, addToCart as cartAdd, decreaseFromCart as cartDecrease, calcCartSummary } from '@/utils/cart.js'
+
 	export default {
 		data: function() {
 			return {
@@ -128,47 +130,29 @@
 		computed: {
 			productsWithHeader: function() {
 				var result = [];
-				// 1. 固定首项：团购特惠（与首页数据保持一致）
 				result.push({ isHeader: true, categoryName: '团购特惠' });
 				this.flashSaleProducts.forEach(function(p) { result.push(p); });
-				// 2. 云端分类（跳过固定项）
 				var byId = {}, byName = {};
 				this.categories.forEach(function(c) {
 					if (c.isFixed) return;
 					if (c._id) byId[String(c._id)] = c;
 					if (c.name) byName[c.name] = c;
 				});
-				// 按解析后的分类把商品分组
 				var groups = {};
 				this.products.forEach(function(p) {
 					var cat = byId[String(p.categoryId)] || byName[p.categoryName] || null;
-					var key;
-					if (cat) {
-						key = 'cat_' + (cat._id || cat.name);
-					} else {
-						key = 'orphan_' + (p.categoryName || 'unknown');
-					}
+					if (!cat) return;
+					var key = 'cat_' + (cat._id || cat.name);
 					if (!groups[key]) groups[key] = { cat: cat, products: [] };
 					groups[key].products.push(p);
 				});
-				// 按左侧分类栏顺序生成 header（header 用分类的 name，商品按 product 对象渲染）
-				var seen = {};
 				this.categories.forEach(function(c) {
-					if (c.isFixed) return;  // 固定项团购特惠已在上面处理
+					if (c.isFixed) return;
 					var key = 'cat_' + (c._id || c.name);
 					var group = groups[key];
 					var list = group ? group.products : [];
 					result.push({ isHeader: true, categoryName: c.name });
 					list.forEach(function(p) { result.push(p); });
-					seen[key] = true;
-				});
-				// 兜底：找不到对应分类的孤儿商品，追加到末尾
-				Object.keys(groups).forEach(function(key) {
-					if (seen[key]) return;
-					var group = groups[key];
-					var displayName = group.cat ? group.cat.name : (group.products[0].categoryName || '其他');
-					result.push({ isHeader: true, categoryName: displayName });
-					group.products.forEach(function(p) { result.push(p); });
 				});
 				return result;
 			}
@@ -191,30 +175,17 @@
 						if (res.data && res.data.code === 0 && res.data.data && res.data.data.length > 0) {
 							self.categories = [{ name: '团购特惠', _id: '__fixed_flash_sale__', isFixed: true }].concat(res.data.data);
 						} else {
-							self.setDefaultCategories();
+							self.categories = [{ name: '团购特惠', _id: '__fixed_flash_sale__', isFixed: true }];
 						}
 						self.loadAllProducts();
 					},
 					fail: function(e) {
 						console.error('获取分类失败:', e);
-						self.setDefaultCategories();
+						self.categories = [{ name: '团购特惠', _id: '__fixed_flash_sale__', isFixed: true }];
 					}
 				});
 			},
-			setDefaultCategories: function() {
-				this.categories = [
-					{ name: '团购特惠', _id: '__fixed_flash_sale__', isFixed: true },
-					{ name: '叶菜类' },
-					{ name: '茄果类' },
-					{ name: '瓜果类' },
-					{ name: '菌菇类' },
-					{ name: '根茎类' },
-					{ name: '豆制品' },
-					{ name: '肉禽蛋' }
-				];
-			},
 			onScroll: function(e) {
-				// 如果刚点击了分类，暂时不更新高亮，避免滚动过程中误触发
 				if (this._skipScrollHighlight) return;
 				var self = this;
 				uni.createSelectorQuery()
@@ -224,13 +195,11 @@
 						if (!rects || rects.length === 0) return;
 						var curCatName = null;
 						for (var i = 0; i < rects.length; i++) {
-							// 找到第一个进入可视区域顶部的标题
 							if (rects[i].top >= 0) {
 								curCatName = self.categories[i]?.name;
 								break;
 							}
 						}
-						// 如果都没找到（滚动到底），用最后一个
 						if (!curCatName) {
 							curCatName = self.categories[rects.length - 1]?.name;
 						}
@@ -245,12 +214,10 @@
 			},
 			selectCategory: function(index) {
 				this.currentCategory = index;
-				// 跳过滚动高亮更新，持续2秒
 				this._skipScrollHighlight = true;
 				var self = this;
 				setTimeout(function() { self._skipScrollHighlight = false; }, 2000);
 				var catName = this.categories[index] ? this.categories[index].name : null;
-				// 找到对应的分类标题在 productsWithHeader 中的位置
 				var items = this.productsWithHeader;
 				var headerIndex = -1;
 				for (var i = 0; i < items.length; i++) {
@@ -259,14 +226,12 @@
 						break;
 					}
 				}
-				// 已移除调试日志
 				if (headerIndex >= 0) {
 					var targetId = 'cat-header-' + headerIndex;
-					// 先清空，再延迟设置，确保触发滚动
 					this.scrollIntoViewId = '';
-					var self = this;
+					var self2 = this;
 					setTimeout(function() {
-						self.scrollIntoViewId = targetId;
+						self2.scrollIntoViewId = targetId;
 					}, 50);
 				}
 			},
@@ -283,12 +248,10 @@
 					success: function(res) {
 						if (res.data && res.data.code === 0) {
 							self.products = res.data.data.map(function(item) {
-								// 价格：优先读 specs[0]，否则读顶层 price（兼容商家APP 单字段提交）
 								var spec = (item.specs && item.specs[0]) ? item.specs[0] : null
 								var price = spec ? Number(spec.price) : (Number(item.price) || 0)
 								var originalPrice = spec ? Number(spec.originalPrice || 0) : (Number(item.originalPrice) || 0)
 								if (!originalPrice) originalPrice = price * 1.5
-								// 库存：优先 specs[0].stock，否则顶层 stock
 								var stock = spec ? Number(spec.stock || 0) : (Number(item.stock) || 0)
 								return {
 									id: item._id,
@@ -297,14 +260,13 @@
 									categoryName: item.categoryName || '',
 									desc: item.description || '新鲜直采·产地直发',
 									service: '当日下单·次日取货',
-									originalPrice: '¥' + originalPrice.toFixed(1),
-									currentPrice: '¥' + price.toFixed(1),
+									originalPrice: '\u00A5' + originalPrice.toFixed(1),
+									currentPrice: '\u00A5' + price.toFixed(1),
 									image: (item.images && item.images[0]) ? item.images[0] : '/static/images/placeholder.png',
 									stock: stock,
 									quantity: 0
 								};
 							});
-							// 按左侧分类栏顺序排序商品
 							var categoryOrder = self.categories.map(function(c) { return c.name; });
 							self.products.sort(function(a, b) {
 								var aIndex = categoryOrder.indexOf(a.categoryName);
@@ -314,16 +276,6 @@
 								if (bIndex === -1) return -1;
 								return aIndex - bIndex;
 							});
-							var result = [];
-							var lastCatName = '';
-							for (var i = 0; i < self.products.length; i++) {
-								var p = self.products[i];
-								if (p.categoryName !== lastCatName && p.categoryName) {
-									result.push({ isHeader: true, categoryName: p.categoryName });
-									lastCatName = p.categoryName;
-								}
-								result.push(p);
-							}
 							self.syncCart();
 						}
 					},
@@ -335,7 +287,6 @@
 					}
 				});
 			},
-			// 加载首页同源的团购特惠商品（固定首项分类用）
 			loadFlashSaleProducts: function() {
 				var self = this;
 				uni.request({
@@ -349,8 +300,23 @@
 						}
 						var saleList = Array.isArray(saleRes.data.data) ? saleRes.data.data : [saleRes.data.data];
 						var now = Date.now();
-						var activeSale = saleList.find(function(s) { return s.status === true && s.startTime <= now && s.endTime > now; })
-							|| saleList.find(function(s) { return s.status === true && s.endTime > now; })
+						var today0 = new Date(); today0.setHours(0, 0, 0, 0);
+						var today0ms = today0.getTime();
+						var windowOf = function(s) {
+							if ((s.type || 'fixed') === 'daily' && s.dailyStart && s.dailyEnd) {
+								var dp = s.dailyStart.split(':'), ep = s.dailyEnd.split(':');
+								var sh = Number(dp[0]) || 0, sm = Number(dp[1]) || 0;
+								var eh = Number(ep[0]) || 0, em = Number(ep[1]) || 0;
+								return {
+									start: today0ms + sh * 3600000 + sm * 60000,
+									end:   today0ms + eh * 3600000 + em * 60000
+								};
+							}
+							return { start: s.startTime, end: s.endTime };
+						};
+						var enriched = saleList.map(function(s) { return Object.assign({}, s, windowOf(s)); });
+						var activeSale = enriched.find(function(s) { return s.status === true && s.start <= now && s.end > now; })
+							|| enriched.find(function(s) { return s.status === true && s.end > now; })
 							|| null;
 						if (!activeSale) {
 							self.flashSaleProducts = [];
@@ -371,8 +337,8 @@
 											desc: '新鲜直采·产地直发',
 											service: '当日下单·次日自提',
 										spec: firstSpec ? (firstSpec.name || '') : '',
-											originalPrice: '¥' + (item.originalPrice || 0),
-											currentPrice: '¥' + (item.flashPrice || 0),
+											originalPrice: '\u00A5' + (item.originalPrice || 0),
+											currentPrice: '\u00A5' + (item.flashPrice || 0),
 											stock: firstSpec ? (firstSpec.stock || 0) : 0,
 											quantity: 0
 										};
@@ -400,104 +366,68 @@
 					uni.showToast({ title: '已达库存上限', icon: 'none' });
 					return;
 				}
+				var price = parseFloat(item.currentPrice.replace(/\u00A5/, ''));
+				cartAdd({ id: item.id, product: { name: item.name, price: price, image: item.image, spec: item.spec || item.desc, originalPrice: item.originalPrice }});
 				item.quantity++;
 				this.updateCart();
 			},
 			decrease: function(item) {
-				if (item.quantity > 0) item.quantity--;
-				this.updateCart();
+				if (item.quantity > 0) {
+					cartDecrease(item.id);
+					item.quantity--;
+					this.updateCart();
+				}
 			},
 			updateCart: function() {
-				var count = 0;
-				var total = 0;
-				var self = this;
-				this.products.forEach(function(p) {
-					if (p.quantity > 0) {
-						count += p.quantity;
-						var price = parseFloat(p.currentPrice.replace('¥', ''));
-						total += p.quantity * price;
-					}
-				});
-				this.flashSaleProducts.forEach(function(p) {
-					if (p.quantity > 0) {
-						count += p.quantity;
-						var price = parseFloat(p.currentPrice.replace('¥', ''));
-						total += p.quantity * price;
-					}
-				});
-				this.selectedCount = count;
-				this.selectedTotal = total.toFixed(2);
-				this.cartCount = count;
+				var cart = getLocalCart();
+				var summary = calcCartSummary(cart);
+				this.selectedCount = summary.count;
+				this.selectedTotal = summary.total;
+				this.cartCount = summary.count;
 			},
 			syncCart: function() {
-				var items = uni.getStorageSync("cartItems");
-				var self = this;
-				if (items) {
-					var parsed = JSON.parse(items);
-					this.products.forEach(function(p) {
-						var cartItem = null;
-						for (var i = 0; i < parsed.length; i++) {
-							if (parsed[i].name === p.name) {
-								cartItem = parsed[i];
-								break;
-							}
-						}
-						p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
-					});
-					// 团购特惠用 id 匹配（避免与首页共享 cartItems 时的重名串号）
-					this.flashSaleProducts.forEach(function(p) {
-						var cartItem = null;
-						for (var i = 0; i < parsed.length; i++) {
-							if (parsed[i].id === p.id) {
-								cartItem = parsed[i];
-								break;
-							}
-						}
-						p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
-					});
-					this.updateCart();
-				} else {
-					this.products.forEach(function(p) {
-						p.quantity = 0;
-					});
-					this.flashSaleProducts.forEach(function(p) {
-						p.quantity = 0;
-					});
-					this.cartCount = 0;
-					this.selectedCount = 0;
-					this.selectedTotal = "0.00";
-				}
+				var cart = getLocalCart();
+				this.products.forEach(function(p) {
+					var cartItem = null;
+					for (var i = 0; i < cart.length; i++) {
+						if (cart[i].id === p.id) { cartItem = cart[i]; break; }
+					}
+					p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
+				});
+				this.flashSaleProducts.forEach(function(p) {
+					var cartItem = null;
+					for (var i = 0; i < cart.length; i++) {
+						if (cart[i].id === p.id) { cartItem = cart[i]; break; }
+					}
+					p.quantity = cartItem ? (cartItem.quantity || 0) : 0;
+				});
+				this.updateCart();
 			},
 			goCart: function() {
 				uni.navigateTo({ url: "/pages/cart/index" });
 			},
 			goCheckout: function() {
-				var toCartItem = function(p) {
+				var cart = getLocalCart();
+				if (cart.length === 0) { return; }
+				var items = cart.map(function(c) {
+					var p = c.product || {};
 					return {
-						productId: p.id,
-						id: p.id,
-						name: p.name,
-						spec: p.spec || p.desc,
-						image: p.image,
-						currentPrice: p.currentPrice,
-						originalPrice: p.originalPrice,
-						quantity: p.quantity,
-						selected: true
+						id: c.id,
+						name: p.name || "",
+						image: p.image || p.coverImage || "",
+						spec: (p.specs && p.specs[0] && p.specs[0].name) || "",
+						originalPrice: p.originalPrice || "",
+						currentPrice: p.price || p.flashPrice || "",
+						quantity: c.quantity,
+						qty: c.quantity
 					};
-				};
-				var selectedProducts = this.products
-					.filter(function(p) { return p.quantity > 0; })
-					.map(toCartItem)
-					.concat(this.flashSaleProducts
-						.filter(function(p) { return p.quantity > 0; })
-						.map(toCartItem));
-				if (selectedProducts.length > 0) {
-					uni.setStorageSync('cartItems', JSON.stringify(selectedProducts));
-				}
-				uni.navigateTo({ url: "/pages/cart/index" });
+				});
+				uni.setStorageSync("checkoutItems", JSON.stringify(items));
+				uni.navigateTo({ url: "/pages/checkout/index" });
 			}
 		}
 	};
+
 </script>
 
 <style>

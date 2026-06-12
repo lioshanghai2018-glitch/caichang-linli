@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <view class="checkout-page">
     <!-- 顶部地址+配送方式 -->
     <view class="header">
@@ -52,8 +52,8 @@
       </view>
     </view>
 
-    <!-- 超值加购优惠 -->
-    <view class="card">
+    <!-- 超值加购优惠(无活动或无商品时整个隐藏) -->
+    <view v-if="addOnProducts.length > 0" class="card">
       <view class="addon-header">
         <text class="addon-title">超值加购优惠</text>
         <text class="addon-sub">随单带走</text>
@@ -155,6 +155,7 @@
 import { STORAGE_KEYS } from '@/utils/config.js'
 import { request } from '@/utils/request.js'
 import { requireLogin } from '@/utils/auth.js'
+import { getDefaultAddress } from '@/utils/address.js'
 export default {
   data() {
     return {
@@ -167,12 +168,7 @@ export default {
       remark: '',
       showFeeInfo: false,
       selectedProducts: [],
-      addOnProducts: [
-        { name: '有机西红柿', spec: '500g/份', originalPrice: '12.8', currentPrice: '8.8', checked: false, image: '/static/images/有机西红柿.png' },
-        { name: '新鲜鸡蛋', spec: '10枚/盒', originalPrice: '15.0', currentPrice: '9.9', checked: false, image: '/static/images/新鲜鸡蛋.png' },
-        { name: '有机青菜', spec: '300g/份', originalPrice: '6.0', currentPrice: '3.8', checked: false, image: '/static/images/有机青菜.png' },
-        { name: '胡萝卜', spec: '400g/份', originalPrice: '5.0', currentPrice: '2.9', checked: false, image: '/static/images/胡萝卜.png' }
-      ]
+      addOnProducts: []
     }
   },
   computed: {
@@ -219,9 +215,12 @@ export default {
       }
     }
     this.selectedProducts = arr;
+    if (savedAddr) this.selectedAddress = savedAddr
+    if (!this.selectedAddress) this.selectedAddress = getDefaultAddress()
     this.loadAddOnProducts();
   },
   onShow() {
+    const savedAddr = this.selectedAddress
     const raw = uni.getStorageSync("checkoutItems");
     const arr = [];
     if (raw) {
@@ -275,6 +274,7 @@ export default {
     },
     toggleAddOn(index) { this.addOnProducts[index].checked = !this.addOnProducts[index].checked },
     // 从云端拉团购特惠商品,同步到 addOnProducts(保持 name/spec/originalPrice/currentPrice/image/checked 字段)
+    // 注意:每日活动 + 固定活动都关闭时,这里会清空 addOnProducts,加购区整个隐藏,防止售出测试数据商品
     async loadAddOnProducts() {
       try {
         const saleRes = await uni.request({
@@ -282,20 +282,44 @@ export default {
           method: 'POST',
           data: { method: 'getFlashSale', params: {} }
         });
-        if (!saleRes.data || saleRes.data.code !== 0 || !saleRes.data.data) return;
+        if (!saleRes.data || saleRes.data.code !== 0 || !saleRes.data.data) {
+          this.addOnProducts = [];
+          return;
+        }
         const saleList = Array.isArray(saleRes.data.data) ? saleRes.data.data : [saleRes.data.data];
         const now = Date.now();
-        const activeSale = saleList.find(s => s.status === true && s.startTime <= now && s.endTime > now)
-          || saleList.find(s => s.status === true && s.endTime > now)
+        // 按 type 解析时间窗口:fixed 用 ms 窗口,daily 把 HH:mm 拼到今天 0 点
+        const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+        const today0ms = today0.getTime();
+        const windowOf = (s) => {
+          if ((s.type || 'fixed') === 'daily' && s.dailyStart && s.dailyEnd) {
+            const [sh, sm] = s.dailyStart.split(':').map(Number);
+            const [eh, em] = s.dailyEnd.split(':').map(Number);
+            return {
+              start: today0ms + sh * 3600000 + sm * 60000,
+              end:   today0ms + eh * 3600000 + em * 60000
+            };
+          }
+          return { start: s.startTime, end: s.endTime };
+        };
+        const enriched = saleList.map(s => ({ ...s, ...windowOf(s) }));
+        const activeSale = enriched.find(s => s.status === true && s.start <= now && s.end > now)
+          || enriched.find(s => s.status === true && s.end > now)
           || null;
-        if (!activeSale) return;
+        if (!activeSale) {
+          this.addOnProducts = [];
+          return;
+        }
 
         const productRes = await uni.request({
           url: 'https://fc-mp-ae9bd108-da40-4ae6-923b-c3007dedec12.next.bspapp.com/merchant-api/getFlashSaleProducts',
           method: 'POST',
           data: { method: 'getFlashSaleProducts', params: { flashSaleId: activeSale._id } }
         });
-        if (!productRes.data || productRes.data.code !== 0) return;
+        if (!productRes.data || productRes.data.code !== 0) {
+          this.addOnProducts = [];
+          return;
+        }
 
         const list = (productRes.data.data || []).map(item => ({
           id: item._id,
@@ -306,7 +330,7 @@ export default {
           currentPrice: String(item.flashPrice || '').replace('¥', ''),
           checked: false
         }));
-        if (list.length > 0) this.addOnProducts = list;
+        this.addOnProducts = list;  // 商品空也设为空数组,加购区整体隐藏
       } catch (e) {
         console.warn('[checkout] 加载团购特惠失败,使用本地兜底:', e)
       }
@@ -446,6 +470,7 @@ export default {
 
       uni.removeStorageSync('cartItems')
       uni.removeStorageSync('checkoutItems')
+      uni.removeStorageSync('cart_items')
       const successMsg = orderStatus === 'pending_payment' ? '已创建待支付订单' : '测试付款成功'
       uni.showToast({ title: successMsg, icon: 'success' })
       setTimeout(() => {

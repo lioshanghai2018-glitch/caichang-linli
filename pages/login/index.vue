@@ -1,53 +1,60 @@
 <template>
-<view class="login-container">
-	<!-- 顶部图片占位区 -->
-	<view class="top-banner">
-		<image class="banner-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/大研菜场_微信登录页.jpg" mode="aspectFill" />
-	</view>
+	<view class="login-container">
+		<!-- 顶部图片占位区 -->
+		<view class="top-banner">
+			<image class="banner-image" src="https://mp-ae9bd108-da40-4ae6-923b-c3007dedec12.cdn.bspapp.com/大研菜场_微信登录页.jpg" mode="widthFix" />
+		</view>
 
-	<!-- 欢迎区 -->
-	<view class="welcome-section">
-		<text class="welcome-title">欢迎使用大研菜场</text>
-		<text class="welcome-subtitle">微信一键登录,开启新鲜生活</text>
-	</view>
+		<!-- 欢迎区 -->
+		<view class="welcome-section">
+			<text class="welcome-title">欢迎使用大研菜场</text>
+			<text class="welcome-subtitle">微信一键登录,开启新鲜生活</text>
+		</view>
 
-	<!-- 登录操作区 -->
-	<view class="action-section">
-		<!-- #ifdef MP-WEIXIN -->
-		<button class="btn-wechat-primary" :loading="wechatLoading" @tap="handleWeixinLogin">
-			<text class="btn-text">微信一键登录</text>
-		</button>
-		<!-- #endif -->
+		<!-- 登录操作区 -->
+		<view class="action-section">
+			<!-- #ifdef MP-WEIXIN -->
+			<button class="btn-wechat-primary" :loading="wechatLoading" @tap="handleWeixinLogin">
+				<text class="btn-text">微信一键登录</text>
+			</button>
+			<!-- #endif -->
 
-		<!-- #ifdef H5 || APP-PLUS -->
-		<view class="h5-app-content">
-			<text class="test-hint">仅用于查看云端已有数据。开发期使用。</text>
-			<view class="input-group">
-				<text class="label">userId（可选）</text>
-				<input class="input" v-model="testUserId" placeholder="留空自动生成" />
+			<!-- #ifdef H5 || APP-PLUS -->
+			<view class="h5-app-content">
+				<text class="test-hint">仅用于查看云端已有数据。开发期使用。</text>
+				<view class="input-group">
+					<text class="label">userId（可选）</text>
+					<input class="input" v-model="testUserId" placeholder="留空自动生成" />
+				</view>
+				<button class="btn-sms-login" :loading="testLoading" @tap="handleTestLogin">进入测试模式</button>
+
+				<!-- #ifdef APP-PLUS -->
+				<view class="divider-with-text">
+					<view class="divider-line"></view>
+					<text class="divider-text">本机号码一键登录</text>
+					<view class="divider-line"></view>
+				</view>
+				<button class="btn-oneclick" :loading="oneClickLoading" @tap="handleOneClick">本机号码一键登录</button>
+				<!-- #endif -->
 			</view>
-			<button class="btn-sms-login" :loading="testLoading" @tap="handleTestLogin">进入测试模式</button>
-
-			<!-- #ifdef APP-PLUS -->
-			<view class="divider-with-text">
-				<view class="divider-line"></view>
-				<text class="divider-text">本机号码一键登录</text>
-				<view class="divider-line"></view>
-			</view>
-			<button class="btn-oneclick" :loading="oneClickLoading" @tap="handleOneClick">本机号码一键登录</button>
 			<!-- #endif -->
 		</view>
-		<!-- #endif -->
-	</view>
 
-	<!-- 底部协议 -->
-	<view class="footer">
-		<text>登录即表示您同意</text>
-		<navigator url="/pages/agreement/agreement?type=user" class="link">《用户服务协议》</navigator>
-		<text>和</text>
-		<navigator url="/pages/agreement/agreement?type=privacy" class="link">《隐私政策》</navigator>
+		<!-- 底部协议 -->
+		<view class="footer">
+			<checkbox-group @change="onAgreeChange">
+				<label class="agreement-label">
+					<checkbox value="agree" :checked="agreed" color="#1AAD19" />
+					<text class="agreement-text">我已阅读并同意</text>
+				</label>
+			</checkbox-group>
+			<view class="agreement-links">
+				<navigator url="/pages/agreement/agreement?type=user" class="link">《用户服务协议》</navigator>
+				<text class="agreement-text">和</text>
+				<navigator url="/pages/agreement/agreement?type=privacy" class="link">《隐私政策》</navigator>
+			</view>
+		</view>
 	</view>
-</view>
 </template>
 
 <script>
@@ -59,6 +66,7 @@ import { loginByWeixin } from '@/utils/auth.js'
 export default {
 	data() {
 		return {
+			agreed: false,
 			wechatLoading: false,
 			// #ifdef H5 || APP-PLUS
 			testLoading: false,
@@ -70,6 +78,10 @@ export default {
 	methods: {
 		// #ifdef MP-WEIXIN
 		async handleWeixinLogin() {
+			if (!this.agreed) {
+				uni.showToast({ title: '请先阅读并同意用户服务协议和隐私政策', icon: 'none', duration: 2000 })
+				return
+			}
 			this.wechatLoading = true
 			try {
 				const r = await uni.login({ provider: 'weixin' })
@@ -88,6 +100,10 @@ export default {
 		// #endif
 		// #ifdef H5 || APP-PLUS
 		async handleOneClick() {
+			if (!this.agreed) {
+				uni.showToast({ title: '请先阅读并同意用户服务协议和隐私政策', icon: 'none', duration: 2000 })
+				return
+			}
 			this.oneClickLoading = true
 			try {
 				await loginByUniverify()
@@ -100,6 +116,10 @@ export default {
 			}
 		},
 		handleTestLogin() {
+			if (!this.agreed) {
+				uni.showToast({ title: '请先阅读并同意用户服务协议和隐私政策', icon: 'none', duration: 2000 })
+				return
+			}
 			this.testLoading = true
 			try {
 				loginAsTest(this.testUserId)
@@ -108,8 +128,11 @@ export default {
 			} finally {
 				this.testLoading = false
 			}
-		}
+		},
 		// #endif
+		onAgreeChange(e) {
+			this.agreed = e.detail.value.includes('agree')
+		}
 	}
 }
 </script>
@@ -125,13 +148,11 @@ export default {
 /* ========== 顶部图片占位区 ========== */
 .top-banner {
 	width: 100%;
-	height: 840rpx;
 	overflow: hidden;
 }
 
 .banner-image {
 	width: 100%;
-	height: 100%;
 	display: block;
 }
 
@@ -276,19 +297,32 @@ export default {
 /* ========== 底部协议 ========== */
 .footer {
 	display: flex;
+	flex-direction: column;
 	align-items: center;
-	justify-content: center;
-	flex-wrap: wrap;
-	font-size: 22rpx;
-	color: #999;
-	text-align: center;
+	gap: 16rpx;
 	padding: 40rpx 40rpx 50rpx;
 	background-color: #FFFFFF;
+}
+
+.agreement-label {
+	display: flex;
+	align-items: center;
+	gap: 8rpx;
+}
+
+.agreement-text {
+	font-size: 24rpx;
+	color: #999999;
+}
+
+.agreement-links {
+	display: flex;
+	align-items: center;
+	gap: 4rpx;
 }
 
 .footer .link {
 	color: #2D5A27;
 	text-decoration: underline;
-	margin: 0 4rpx;
 }
 </style>
